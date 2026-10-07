@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Student — CBT School System</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:16px 18px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:4px}
+  .stat .label{color:var(--muted);font-size:.82rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+  .stat .value{font-size:2rem;font-weight:800;letter-spacing:-.02em;line-height:1.1}
+  .stat .sub{color:var(--muted);font-size:.86rem}
+  .section-title{margin:22px 0 10px}
+  .section-title h2{margin:0}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1 style="margin:0" id="greeting">Welcome</h1>
+    <p class="lede" style="margin:4px 0 18px" id="whoLine">Loading…</p>
+
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">Available exams</h2>
+    <p class="lede">Only exams your teacher has published appear here.</p>
+    <div class="table-scroll">
+      <table class="tbl">
+        <thead>
+          <tr><th>Title</th><th>Subject</th><th>Questions</th><th>Duration</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody id="availBody"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">My submissions</h2>
+    <p class="lede">Your scores will be published at the end of the term. You cannot see them here.</p>
+    <div class="table-scroll">
+      <table class="tbl">
+        <thead>
+          <tr><th>Title</th><th>Subject</th><th>Started</th><th>Submitted</th><th>Status</th></tr>
+        </thead>
+        <tbody id="mineBody"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">My results</h2>
+    <p class="lede">Only reports the school has published appear here.</p>
+    <div id="resultsBody"><p class="muted">Loading…</p></div>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+
+document.getElementById("main").insertBefore(renderStudentNav("/student/dashboard.html"), document.getElementById("main").firstChild);
+
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+
+async function loadAvailable() {
+  const body = $("#availBody");
+  try {
+    const data = await API.get("/api/attempts/available");
+    $("#greeting").textContent = "Hello, " + data.student.full_name.split(" ")[0];
+    $("#whoLine").textContent = data.student.full_name + " — JSS student";
+
+    const exams = data.exams || [];
+    const taken = exams.filter(e => e.status === "submitted").length;
+    const inProgress = exams.filter(e => e.status === "in_progress").length;
+    const notStarted = exams.filter(e => e.status === "not_started").length;
+
+    $("#stats").innerHTML = [
+      { label: "Available",   value: exams.length,  sub: "Total exams for your class" },
+      { label: "Not started", value: notStarted,    sub: "Ready when you are" },
+      { label: "Submitted",   value: taken,         sub: "Completed exams" },
+      { label: "In progress", value: inProgress,    sub: "Resume any time" }
+    ].map(x => `
+      <div class="stat">
+        <span class="label">${x.label}</span>
+        <span class="value">${x.value}</span>
+        <span class="sub">${x.sub}</span>
+      </div>`).join("");
+
+    if (!exams.length) {
+      body.innerHTML = `<tr><td colspan="6" class="muted">No exams available yet. Check back after your teacher publishes one.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const e of exams) {
+      const tr = document.createElement("tr");
+      let statusText, statusClass, actionBtn;
+      if (e.status === "not_started") {
+        statusText = "Not started"; statusClass = "s-notstarted";
+        actionBtn = `<a class="btn small primary" href="/student/exam.html?id=${e.id}">Start</a>`;
+      } else if (e.status === "in_progress") {
+        statusText = "In progress"; statusClass = "s-progress";
+        actionBtn = `<a class="btn small" href="/student/exam.html?id=${e.id}">Resume</a>`;
+      } else {
+        statusText = "Submitted"; statusClass = "s-submitted";
+        actionBtn = `<span class="muted">—</span>`;
+      }
+      tr.innerHTML = `
+        <td>${escapeHtml(e.title)}</td>
+        <td>${escapeHtml(e.subject_name || "")}</td>
+        <td>${e.question_count}</td>
+        <td>${e.duration_minutes} min</td>
+        <td><span class="status-tag ${statusClass}">${statusText}</span></td>
+        <td>${actionBtn}</td>`;
+      body.appendChild(tr);
+    }
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+async function loadMine() {
+  const body = $("#mineBody");
+  try {
+    const { attempts } = await API.get("/api/attempts/mine");
+    if (!attempts.length) {
+      body.innerHTML = `<tr><td colspan="5" class="muted">You haven't taken any exams yet.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const a of attempts) {
+      const tr = document.createElement("tr");
+      const status = a.submitted_at ? "Submitted" : "In progress";
+      const cls = a.submitted_at ? "s-submitted" : "s-progress";
+      tr.innerHTML = `
+        <td>${escapeHtml(a.title)}</td>
+        <td>${a.subject_name || ""}</td>
+        <td>${a.started_at || ""}</td>
+        <td>${a.submitted_at || ""}</td>
+        <td><span class="status-tag ${cls}">${status}</span></td>`;
+      body.appendChild(tr);
+    }
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+async function loadMyResults() {
+  const box = $("#resultsBody");
+  try {
+    const [{ reports }, { student }] = await Promise.all([
+      API.get("/api/attempts/my-results"),
+      API.get("/api/attempts/available")
+    ]);
+    if (!reports.length) {
+      box.innerHTML = `<p class="muted">No published reports yet. They will appear here when your school publishes them.</p>`;
+      return;
+    }
+    const rows = reports.map(r => {
+      const label = r.type === "midterm" ? "Midterm report" : "End-of-term report";
+      return `<tr>
+        <td>${escapeHtml(label)} — ${escapeHtml(r.session_name || "")} ${escapeHtml(r.term)} Term</td>
+        <td class="muted">${escapeHtml(r.published_at || "")}</td>
+        <td><a class="btn small" target="_blank"
+               href="/report-print.html?student_id=${student.id}&session_id=${r.session_id}&term=${encodeURIComponent(r.term)}&type=${r.type}">View</a></td>
+      </tr>`;
+    }).join("");
+    box.innerHTML = `<div class="table-scroll"><table class="tbl">
+      <thead><tr><th>Report</th><th>Published</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  } catch (e) {
+    box.innerHTML = `<p class="muted">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  const user = await loadUserHeader("#hdr", ["student"]);
+  if (!user) return;
+  loadAvailable();
+  loadMine();
+  loadMyResults();
+})();
+</script>
+</body>
+</html>

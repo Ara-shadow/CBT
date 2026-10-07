@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scores — Teacher</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;font-weight:700;font-size:.9rem;gap:4px}
+  .controls select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);min-width:200px}
+  .grid-input{width:70px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);text-align:center}
+  .grid-input:disabled{background:var(--bg);color:var(--muted)}
+  table.grid td{padding:6px 8px}
+  table.grid th{font-size:.82rem;text-transform:uppercase;letter-spacing:.03em}
+  .derived{color:var(--muted);text-align:center;font-weight:700}
+  .cbt-cell{text-align:center;font-weight:700;color:var(--primary)}
+  .totals{display:flex;gap:16px;color:var(--muted);font-size:.9rem;margin:10px 0}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .sticky-actions{position:sticky;bottom:0;background:var(--surface);padding:10px 0;border-top:1px solid var(--line);margin-top:12px}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Scores</h1>
+    <p class="lede">Enter CA1, CA2, Project and PBT for each student. CBT is pulled automatically from submitted attempts.</p>
+
+    <div class="controls">
+      <label>Class <select id="fClass"><option value="">—</option></select></label>
+      <label>Subject <select id="fSubject"><option value="">—</option></select></label>
+      <label>Session <select id="fSession"><option value="">—</option></select></label>
+      <label>Term
+        <select id="fTerm">
+          <option>First</option><option>Second</option><option>Third</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="actions">
+      <button class="btn" id="syncBtn" type="button">Sync CBT scores</button>
+      <button class="btn primary" id="saveBtn" type="button">Save all</button>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <div class="totals" id="totals"></div>
+
+    <div style="overflow-x:auto">
+      <table class="tbl grid">
+        <thead>
+          <tr>
+            <th>Student</th>
+            <th>CA1 /10</th>
+            <th>CA2 /20</th>
+            <th>Proj /10</th>
+            <th>CBT /30</th>
+            <th>PBT /30</th>
+            <th>Midterm /40</th>
+            <th>Total /100</th>
+          </tr>
+        </thead>
+        <tbody id="body"><tr><td colspan="8" class="muted">Choose class, subject, session and term above.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let classes = [];
+let subjects = [];
+let sessions = [];
+let currentRows = [];
+
+// Role-aware nav
+(async () => {
+  try {
+    const { user } = await API.get("/api/me");
+    const nav = user.role === "admin"
+      ? renderAdminNav(location.pathname)
+      : renderTeacherNav(location.pathname);
+    document.getElementById("main").insertBefore(nav, document.getElementById("main").firstChild);
+  } catch {}
+})();
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadRefs() {
+  const [subs, cls, sess] = await Promise.all([
+    API.get("/api/subjects"),
+    API.get("/api/teacher/classes"),
+    API.get("/api/teacher/sessions")
+  ]);
+  subjects = subs.subjects || [];
+  classes  = cls.classes  || [];
+  sessions = sess.sessions || [];
+
+  const fill = (sel, items, label, empty) => {
+    sel.innerHTML = `<option value="">${empty}</option>`;
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.id;
+      o.textContent = label(it);
+      sel.appendChild(o);
+    }
+  };
+  fill($("#fClass"),   classes,  c => `${c.name} ${c.arm || ""}`.trim(), "—");
+  fill($("#fSubject"), subjects, s => s.name + (s.code ? ` (${s.code})` : ""), "—");
+  fill($("#fSession"), sessions, s => `${s.name} — ${s.term}${s.is_current ? " (current)" : ""}`, "—");
+
+  const cur = sessions.find(s => s.is_current);
+  if (cur) $("#fSession").value = cur.id;
+}
+
+function allChosen() {
+  return $("#fClass").value && $("#fSubject").value && $("#fSession").value && $("#fTerm").value;
+}
+
+function recomputeRow(tr) {
+  const get = (cls) => Number(tr.querySelector("." + cls).value || 0);
+  const ca1 = get("ca1"), ca2 = get("ca2"), proj = get("project"), pbt = get("pbt");
+  const cbt = Number(tr.dataset.cbt || 0);
+  const midterm = Math.round((ca1 + ca2 + proj) * 100) / 100;
+  const total   = Math.round((midterm + cbt + pbt) * 100) / 100;
+  tr.querySelector(".midterm").textContent = midterm;
+  tr.querySelector(".total").textContent   = total;
+}
+
+function updateClassTotals() {
+  const rows = Array.from($("#body").querySelectorAll("tr[data-sid]"));
+  if (!rows.length) { $("#totals").textContent = ""; return; }
+  const totals = rows.map(tr => Number(tr.querySelector(".total").textContent) || 0);
+  const avg = totals.reduce((a,b) => a+b, 0) / totals.length;
+  const high = Math.max(...totals);
+  $("#totals").textContent = `Class average: ${avg.toFixed(1)}  ·  Class highest: ${high.toFixed(1)}  ·  Students: ${rows.length}`;
+}
+
+async function load() {
+  if (!allChosen()) {
+    $("#body").innerHTML = `<tr><td colspan="8" class="muted">Choose class, subject, session and term above.</td></tr>`;
+    $("#totals").textContent = "";
+    return;
+  }
+  const body = $("#body");
+  try {
+    const params = new URLSearchParams({
+      class_id: $("#fClass").value,
+      subject_id: $("#fSubject").value,
+      session_id: $("#fSession").value,
+      term: $("#fTerm").value
+    });
+    const { rows } = await API.get("/api/scores?" + params.toString());
+    currentRows = rows;
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="8" class="muted">No active students in this class.</td></tr>`;
+      $("#totals").textContent = "";
+      return;
+    }
+    body.innerHTML = "";
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      tr.dataset.sid = r.student_id;
+      tr.dataset.cbt = r.cbt_score;
+      tr.innerHTML = `
+        <td>${escapeHtml(r.full_name)}<div class="muted" style="font-size:.82rem">${escapeHtml(r.admission_no)}</div></td>
+        <td><input class="grid-input ca1" type="number" min="0" max="10" step="0.5" value="${r.ca1}"></td>
+        <td><input class="grid-input ca2" type="number" min="0" max="20" step="0.5" value="${r.ca2}"></td>
+        <td><input class="grid-input project" type="number" min="0" max="10" step="0.5" value="${r.project}"></td>
+        <td class="cbt-cell">${r.cbt_score}</td>
+        <td><input class="grid-input pbt" type="number" min="0" max="30" step="0.5" value="${r.pbt_score}"></td>
+        <td class="derived midterm">${r.midterm_total}</td>
+        <td class="derived total">${r.term_total}</td>`;
+      body.appendChild(tr);
+      tr.querySelectorAll("input").forEach(inp => inp.addEventListener("input", () => {
+        recomputeRow(tr);
+        updateClassTotals();
+      }));
+    }
+    updateClassTotals();
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="8" class="muted">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function save() {
+  if (!allChosen()) return;
+  const rows = Array.from($("#body").querySelectorAll("tr[data-sid]")).map(tr => ({
+    student_id: Number(tr.dataset.sid),
+    ca1: Number(tr.querySelector(".ca1").value || 0),
+    ca2: Number(tr.querySelector(".ca2").value || 0),
+    project: Number(tr.querySelector(".project").value || 0),
+    pbt_score: Number(tr.querySelector(".pbt").value || 0)
+  }));
+  try {
+    await API.post("/api/scores", {
+      class_id: Number($("#fClass").value),
+      subject_id: Number($("#fSubject").value),
+      session_id: Number($("#fSession").value),
+      term: $("#fTerm").value,
+      rows
+    });
+    flash("Scores saved.", "ok");
+    load();
+  } catch (e) { flash(e.message, "err"); }
+}
+
+async function syncCbt() {
+  if (!allChosen()) return;
+  try {
+    const r = await API.post("/api/scores/sync-cbt", {
+      class_id: Number($("#fClass").value),
+      subject_id: Number($("#fSubject").value),
+      session_id: Number($("#fSession").value),
+      term: $("#fTerm").value
+    });
+    flash(r.updated ? `Synced CBT for ${r.updated} student(s).` : `No CBT results to sync. ${r.reason || ""}`, "ok");
+    load();
+  } catch (e) { flash(e.message, "err"); }
+}
+
+function flash(text, kind) {
+  const m = $("#msg");
+  m.textContent = text;
+  m.className = "msg " + (kind || "ok");
+  m.hidden = false;
+  setTimeout(() => { m.hidden = true; }, 3000);
+}
+
+$("#fClass").onchange = load;
+$("#fSubject").onchange = load;
+$("#fSession").onchange = load;
+$("#fTerm").onchange = load;
+$("#saveBtn").onclick = save;
+$("#syncBtn").onclick = syncCbt;
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["teacher", "admin"]);
+  if (!me) return;
+  await loadRefs();
+})();
+</script>
+</body>
+</html>

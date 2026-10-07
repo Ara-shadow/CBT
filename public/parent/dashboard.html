@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parent — CBT School System</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Welcome</h1>
+    <p class="lede" id="whoLine">Loading…</p>
+  </section>
+
+  <section class="panel" style="margin-top:16px">
+    <h2>Your children</h2>
+    <div id="children"><p class="muted">Loading…</p></div>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadMe() {
+  try {
+    const { user } = await API.get("/api/me");
+    if (!user || user.role !== "parent") { window.location.href = "/login.html"; return null; }
+    $("#userName").textContent = user.full_name;
+    $("#userRole").textContent = user.role;
+    return user;
+  } catch { window.location.href = "/login.html"; return null; }
+}
+
+async function loadChildren() {
+  const box = $("#children");
+  try {
+    const { parent, children } = await API.get("/api/parent/me");
+    $("#whoLine").textContent = `${parent.full_name}${parent.phone ? " · " + parent.phone : ""}`;
+
+    if (!children.length) {
+      box.innerHTML = `<p class="muted">No children linked to this account yet. Please contact the school.</p>`;
+      return;
+    }
+    box.innerHTML = "";
+    for (const c of children) {
+      const card = document.createElement("div");
+      card.className = "panel";
+      card.style.marginBottom = "12px";
+      card.innerHTML = `
+        <h3 style="margin:0 0 4px">${escapeHtml(c.full_name)}</h3>
+        <p class="muted" style="margin:0 0 10px">${escapeHtml(c.admission_no)}${c.class_name ? " · " + escapeHtml(c.class_name) + " " + escapeHtml(c.class_arm || "") : ""}</p>
+        <div id="reports-${c.id}" class="muted">Loading reports…</div>`;
+      box.appendChild(card);
+      loadReports(c.id, "#reports-" + c.id);
+    }
+  } catch (e) {
+    box.innerHTML = `<p class="muted">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+async function loadReports(studentId, sel) {
+  const el = document.querySelector(sel);
+  try {
+    const { reports } = await API.get("/api/parent/reports?student_id=" + studentId);
+    if (!reports.length) {
+      el.innerHTML = `<em>No published reports yet.</em>`;
+      return;
+    }
+    const rows = reports.map(r => {
+      const label = r.type === "midterm" ? "Midterm report" : "End-of-term report";
+      return `<tr>
+        <td>${escapeHtml(label)} — ${escapeHtml(r.session_name || "")} ${escapeHtml(r.term)} Term</td>
+        <td class="muted">${escapeHtml(r.published_at || "")}</td>
+        <td><a class="btn" href="/report-print.html?student_id=${studentId}&session_id=${r.session_id}&term=${encodeURIComponent(r.term)}&type=${r.type}" target="_blank">View</a></td>
+      </tr>`;
+    }).join("");
+    el.innerHTML = `<table class="tbl"><thead><tr><th>Report</th><th>Published</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) {
+    el.textContent = e.message;
+  }
+}
+
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  const user = await loadMe();
+  if (!user) return;
+  loadChildren();
+})();
+</script>
+</body>
+</html>

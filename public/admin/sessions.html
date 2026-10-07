@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sessions — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Academic sessions</h1>
+    <p class="lede">Create terms like “2025/2026 First Term” and mark one as current.</p>
+
+    <form id="createForm" class="row" style="margin-bottom:16px">
+      <input type="text" id="name" placeholder="Session e.g. 2026/2027" required>
+      <select id="term">
+        <option>First</option><option>Second</option><option>Third</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="setCurrent"> Set as current
+      </label>
+      <button class="btn primary" type="submit">Add session</button>
+    </form>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <table class="tbl">
+      <thead><tr><th>Session</th><th>Term</th><th>Current</th><th>Actions</th></tr></thead>
+      <tbody id="body"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+loadUserHeader("#hdr");
+
+$("#main").insertBefore(renderAdminNav("/admin/sessions.html"), $("#main").firstChild);
+
+async function load() {
+  const body = $("#body");
+  try {
+    const { sessions } = await API.get("/api/admin/academic/sessions");
+    if (!sessions.length) { body.innerHTML = `<tr><td colspan="4" class="muted">No sessions yet.</td></tr>`; return; }
+    body.innerHTML = "";
+    for (const s of sessions) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${s.name}</td>
+        <td>${s.term}</td>
+        <td>${s.is_current ? '<span class="pill ok">Current</span>' : ""}</td>
+        <td></td>`;
+      const td = tr.lastElementChild;
+
+      if (!s.is_current) {
+        const setBtn = document.createElement("button");
+        setBtn.className = "btn";
+        setBtn.textContent = "Set current";
+        setBtn.onclick = async () => {
+          try { await API.post(`/api/admin/academic/sessions/${s.id}/current`, {}); load(); }
+          catch (e) { alert(e.message); }
+        };
+        td.appendChild(setBtn);
+      }
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn danger";
+      delBtn.style.marginLeft = "8px";
+      delBtn.textContent = "Delete";
+      delBtn.onclick = async () => {
+        if (!confirm("Delete this session?")) return;
+        try { await API.del(`/api/admin/academic/sessions/${s.id}`); load(); }
+        catch (e) { alert(e.message); }
+      };
+      td.appendChild(delBtn);
+      body.appendChild(tr);
+    }
+  } catch (e) { body.innerHTML = `<tr><td colspan="4" class="muted">${e.message}</td></tr>`; }
+}
+
+$("#createForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#msg"); msg.hidden = true;
+  try {
+    await API.post("/api/admin/academic/sessions", {
+      name: $("#name").value.trim(),
+      term: $("#term").value,
+      is_current: $("#setCurrent").checked
+    });
+    $("#createForm").reset();
+    load();
+  } catch (err) {
+    msg.textContent = err.message; msg.className = "msg err"; msg.hidden = false;
+  }
+});
+
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+load();
+</script>
+</body>
+</html>

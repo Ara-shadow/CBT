@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+  .settings-grid label{display:flex;flex-direction:column;font-weight:700;font-size:.92rem;gap:4px}
+  .settings-grid input,.settings-grid select,.settings-grid textarea{
+    padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);width:100%
+  }
+  .settings-grid .full{grid-column:1 / -1}
+  @media (max-width:700px){ .settings-grid{grid-template-columns:1fr} }
+  .hint{color:var(--muted);font-weight:400;font-size:.86rem;margin-top:2px}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>School settings</h1>
+    <p class="lede">These appear on report cards. The school level decides whether the head line prints as “Principal” or “Head Teacher”.</p>
+
+    <form id="form">
+      <div class="settings-grid">
+        <label class="full">School name
+          <input type="text" id="school_name" required>
+        </label>
+
+        <label>School level
+          <select id="school_level">
+            <option value="secondary">Secondary</option>
+            <option value="primary">Primary</option>
+            <option value="both">Both (primary + secondary)</option>
+          </select>
+          <span class="hint">Drives the head title default below.</span>
+        </label>
+
+        <label>Head title
+          <input type="text" id="head_title" placeholder="e.g. Principal or Head Teacher">
+          <span class="hint">Leave blank to auto-set from level.</span>
+        </label>
+
+        <label class="full">Address
+          <textarea id="address" rows="2"></textarea>
+        </label>
+      </div>
+
+      <div id="msg" class="msg" hidden></div>
+
+      <button class="btn primary" type="submit" id="saveBtn">Save settings</button>
+    </form>
+  </section>
+
+  <section class="panel" style="margin-top:16px">
+    <h2>Backup &amp; restore</h2>
+    <p class="lede">Download a copy of the database to keep safe. Restore from a previous backup if needed.</p>
+
+    <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn primary" id="backupBtn" type="button">Download backup</button>
+      <label class="btn" style="cursor:pointer">
+        Restore from backup…
+        <input type="file" id="restoreFile" accept=".db,application/octet-stream" style="display:none">
+      </label>
+    </div>
+
+    <div id="backupMsg" class="msg" hidden></div>
+
+    <div class="muted" style="font-size:.9rem">
+      <p><strong>What gets backed up:</strong> every user, class, student, question, exam, score, attendance record and report card — the entire school database.</p>
+      <p><strong>When restoring:</strong> the current database is replaced. A safety copy of your existing database is saved on the server as <code>cbt.db.before-restore-…</code> in case you need to roll back.</p>
+      <p><strong>After restoring:</strong> stop the server (Ctrl + C) and run <code>npm start</code> again.</p>
+    </div>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+loadUserHeader("#hdr");
+document.getElementById("main").insertBefore(renderAdminNav("/admin/settings.html"), document.getElementById("main").firstChild);
+
+async function load() {
+  try {
+    const { settings } = await API.get("/api/admin/settings");
+    $("#school_name").value = settings.school_name || "";
+    $("#school_level").value = settings.school_level || "secondary";
+    $("#head_title").value = settings.head_title || "";
+    $("#address").value = settings.address || "";
+  } catch (e) {
+    const msg = $("#msg");
+    msg.textContent = e.message; msg.className = "msg err"; msg.hidden = false;
+  }
+}
+
+$("#form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#msg"); msg.hidden = true;
+  const btn = $("#saveBtn"); btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    const { settings } = await API.put("/api/admin/settings", {
+      school_name: $("#school_name").value.trim(),
+      school_level: $("#school_level").value,
+      head_title: $("#head_title").value.trim() || null,
+      address: $("#address").value.trim() || null
+    });
+    msg.textContent = "Saved. Head title now: " + settings.head_title;
+    msg.className = "msg ok";
+    msg.hidden = false;
+  } catch (err) {
+    msg.textContent = err.message; msg.className = "msg err"; msg.hidden = false;
+  } finally {
+    btn.disabled = false; btn.textContent = "Save settings";
+  }
+});
+
+/* ---------- backup & restore ---------- */
+$("#backupBtn").onclick = async () => {
+  const msg = $("#backupMsg");
+  msg.hidden = true;
+  try {
+    const res = await fetch("/api/admin/backup", { credentials: "same-origin" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Backup failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const match = cd.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : ("cbt-backup-" + Date.now() + ".db");
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+    msg.textContent = "Backup downloaded: " + filename;
+    msg.className = "msg ok"; msg.hidden = false;
+  } catch (e) {
+    msg.textContent = e.message;
+    msg.className = "msg err"; msg.hidden = false;
+  }
+};
+
+$("#restoreFile").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const msg = $("#backupMsg");
+  msg.hidden = true;
+
+  const confirmText = prompt(
+    "Restoring will REPLACE the entire database with this file.\n" +
+    "A safety copy will be saved on the server, but please be sure.\n\n" +
+    "Type RESTORE to continue:"
+  );
+  if (confirmText !== "RESTORE") {
+    e.target.value = "";
+    return;
+  }
+
+  const form = new FormData();
+  form.append("file", file);
+
+  try {
+    const res = await fetch("/api/admin/restore", {
+      method: "POST",
+      credentials: "same-origin",
+      body: form
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Restore failed (${res.status})`);
+    msg.textContent = data.message || "Restored. Please restart the server.";
+    msg.className = "msg ok"; msg.hidden = false;
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "msg err"; msg.hidden = false;
+  } finally {
+    e.target.value = "";
+  }
+});
+
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+load();
+</script>
+</body>
+</html>

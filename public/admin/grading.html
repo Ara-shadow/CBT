@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grading scale — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .grade-form{display:grid;grid-template-columns:90px 90px 80px 1fr auto;gap:8px;align-items:end;margin-bottom:14px}
+  .grade-form label{display:flex;flex-direction:column;font-weight:700;font-size:.86rem;gap:4px}
+  .grade-form input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);width:100%}
+  @media (max-width:700px){ .grade-form{grid-template-columns:1fr 1fr} }
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Grading scale</h1>
+    <p class="lede">Bands are checked so they don’t overlap. You can add, edit and delete rows anytime.</p>
+
+    <form id="form" class="grade-form">
+      <label>Min <input type="number" id="min_score" min="0" max="100" required></label>
+      <label>Max <input type="number" id="max_score" min="0" max="100" required></label>
+      <label>Grade <input type="text" id="grade" maxlength="4" required></label>
+      <label>Remark <input type="text" id="remark"></label>
+      <button class="btn primary" type="submit" id="submitBtn">Add band</button>
+      <input type="hidden" id="editingId">
+    </form>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <table class="tbl">
+      <thead>
+        <tr><th>Range</th><th>Grade</th><th>Remark</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="body"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+loadUserHeader("#hdr");
+document.getElementById("main").insertBefore(renderAdminNav("/admin/grading.html"), document.getElementById("main").firstChild);
+
+function resetForm() {
+  $("#min_score").value = ""; $("#max_score").value = "";
+  $("#grade").value = ""; $("#remark").value = "";
+  $("#editingId").value = "";
+  $("#submitBtn").textContent = "Add band";
+}
+
+async function load() {
+  const body = $("#body");
+  try {
+    const { grades } = await API.get("/api/admin/grading");
+    if (!grades.length) {
+      body.innerHTML = `<tr><td colspan="4" class="muted">No grade bands yet. Add one above.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const g of grades) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${g.min_score} – ${g.max_score}</td>
+        <td><strong>${g.grade}</strong></td>
+        <td>${g.remark || ""}</td>
+        <td></td>`;
+      const td = tr.lastElementChild;
+
+      const edit = document.createElement("button");
+      edit.className = "btn"; edit.textContent = "Edit";
+      edit.onclick = () => {
+        $("#min_score").value = g.min_score;
+        $("#max_score").value = g.max_score;
+        $("#grade").value = g.grade;
+        $("#remark").value = g.remark || "";
+        $("#editingId").value = g.id;
+        $("#submitBtn").textContent = "Update band";
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      };
+
+      const del = document.createElement("button");
+      del.className = "btn danger"; del.style.marginLeft = "6px";
+      del.textContent = "Delete";
+      del.onclick = async () => {
+        if (!confirm(`Delete grade ${g.grade} (${g.min_score}–${g.max_score})?`)) return;
+        try { await API.del(`/api/admin/grading/${g.id}`); load(); }
+        catch (e) { alert(e.message); }
+      };
+
+      td.append(edit, del);
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="4" class="muted">${e.message}</td></tr>`;
+  }
+}
+
+$("#form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#msg"); msg.hidden = true;
+  const id = $("#editingId").value;
+  const payload = {
+    min_score: Number($("#min_score").value),
+    max_score: Number($("#max_score").value),
+    grade: $("#grade").value.trim(),
+    remark: $("#remark").value.trim() || null
+  };
+  try {
+    if (id) await API.put(`/api/admin/grading/${id}`, payload);
+    else    await API.post(`/api/admin/grading`, payload);
+    resetForm();
+    load();
+  } catch (err) {
+    msg.textContent = err.message; msg.className = "msg err"; msg.hidden = false;
+  }
+});
+
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+load();
+</script>
+</body>
+</html>

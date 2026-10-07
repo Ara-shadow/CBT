@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exams — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .status-pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.8rem;font-weight:700}
+  .status-draft{background:var(--flag-bg);color:var(--flag)}
+  .status-live{background:var(--ok-bg);color:var(--ok)}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .meta-line{color:var(--muted);font-size:.88rem}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>All exams</h1>
+    <p class="lede">Every exam created by any teacher. Only admins can publish or unpublish.</p>
+
+    <div class="filters">
+      <select id="fSubject"><option value="">All subjects</option></select>
+      <select id="fClass"><option value="">All classes</option></select>
+      <select id="fStatus">
+        <option value="">All statuses</option>
+        <option value="published">Published</option>
+        <option value="draft">Draft</option>
+      </select>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Title</th><th>Subject</th><th>Class</th><th>Term</th>
+          <th>Qs</th><th>Marks</th><th>Author</th><th>Status</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="body"><tr><td colspan="9" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let subjects = [];
+let classes = [];
+let allExams = [];
+
+document.getElementById("main").insertBefore(renderAdminNav("/admin/exams.html"), document.getElementById("main").firstChild);
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadRefs() {
+  const [subs, cls] = await Promise.all([
+    API.get("/api/subjects"),
+    API.get("/api/teacher/classes")
+  ]);
+  subjects = subs.subjects || [];
+  classes  = cls.classes  || [];
+
+  const sub = $("#fSubject");
+  for (const s of subjects) {
+    const o = document.createElement("option");
+    o.value = s.id; o.textContent = s.name + (s.code ? ` (${s.code})` : "");
+    sub.appendChild(o);
+  }
+  const clsSel = $("#fClass");
+  for (const c of classes) {
+    const o = document.createElement("option");
+    o.value = c.id; o.textContent = `${c.name} ${c.arm || ""}`.trim();
+    clsSel.appendChild(o);
+  }
+}
+
+async function load() {
+  const body = $("#body");
+  try {
+    const { exams } = await API.get("/api/exams");
+    allExams = exams;
+
+    // apply filters client-side
+    const fs = $("#fSubject").value;
+    const fc = $("#fClass").value;
+    const st = $("#fStatus").value;
+
+    let filtered = exams;
+    if (fs) filtered = filtered.filter(e => String(e.subject_id) === fs);
+    if (fc) filtered = filtered.filter(e => String(e.class_id) === fc);
+    if (st === "published") filtered = filtered.filter(e => e.is_published);
+    if (st === "draft")     filtered = filtered.filter(e => !e.is_published);
+
+    if (!filtered.length) {
+      body.innerHTML = `<tr><td colspan="9" class="muted">No exams match.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const e of filtered) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${escapeHtml(e.title)}</td>
+        <td>${e.subject_name || ""}</td>
+        <td>${e.class_name ? e.class_name + " " + (e.class_arm || "") : ""}</td>
+        <td>${e.session_name || ""} ${e.session_term || ""}</td>
+        <td>${e.question_count}</td>
+        <td>${e.total_marks}</td>
+        <td class="meta-line">${e.created_by_name || ""}</td>
+        <td>${e.is_published
+          ? '<span class="status-pill status-live">Published</span>'
+          : '<span class="status-pill status-draft">Draft</span>'}</td>
+        <td></td>`;
+      const td = tr.lastElementChild;
+
+      const view = document.createElement("button");
+      view.className = "btn"; view.textContent = "View";
+      view.onclick = async () => {
+        try {
+          const { exam, questions } = await API.get(`/api/exams/${e.id}`);
+          const lines = [
+            exam.title,
+            `Subject: ${exam.subject_name || "—"}`,
+            `Class: ${exam.class_name || ""} ${exam.class_arm || ""}`,
+            `Term: ${exam.session_name || ""} ${exam.session_term || ""}`,
+            `Duration: ${exam.duration_minutes} min · Pass: ${exam.pass_mark}%`,
+            `Status: ${exam.is_published ? "Published" : "Draft"}`,
+            ``,
+            `Questions (${questions.length}):`
+          ];
+          questions.forEach((q, i) => lines.push(`${i+1}. ${q.question}  [${q.correct_answer}]`));
+          alert(lines.join("\n"));
+        } catch (err) { alert(err.message); }
+      };
+      td.appendChild(view);
+
+      const pub = document.createElement("button");
+      pub.className = "btn"; pub.style.marginLeft = "6px";
+      pub.textContent = e.is_published ? "Unpublish" : "Publish";
+      pub.onclick = async () => {
+        try {
+          if (e.is_published) await API.post(`/api/exams/${e.id}/unpublish`, {});
+          else                await API.post(`/api/exams/${e.id}/publish`, {});
+          load();
+        } catch (err) { alert(err.message); }
+      };
+      td.appendChild(pub);
+
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="9" class="muted">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+$("#fSubject").onchange = load;
+$("#fClass").onchange = load;
+$("#fStatus").onchange = load;
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["admin"]);
+  if (!me) return;
+  await loadRefs();
+  load();
+})();
+</script>
+</body>
+</html>

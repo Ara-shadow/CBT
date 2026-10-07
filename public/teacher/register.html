@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Register — Teacher</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  /* ---- controls (visible on screen, hidden on print) ---- */
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;font-weight:700;font-size:.9rem;gap:4px}
+  .controls select,.controls input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+  .no-print{}
+
+  /* ---- the printable sheet ---- */
+  .sheet{
+    background:#fff;color:#000;
+    max-width:1100px;margin:20px auto;padding:22px 26px;
+    border:1px solid #ccc;border-radius:10px;
+    font-family:"Segoe UI",Arial,sans-serif;
+  }
+  .sheet-head{text-align:center;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:12px}
+  .sheet-head h1{margin:0;font-size:20px;letter-spacing:.02em}
+  .sheet-head .sub{font-size:13px;margin-top:2px}
+  .sheet-head .title{font-weight:800;margin-top:6px;font-size:15px}
+  .meta{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:13px;margin-bottom:10px}
+  .meta div{white-space:nowrap}
+  table.reg{width:100%;border-collapse:collapse;font-size:12px}
+  table.reg th,table.reg td{border:1px solid #333;padding:5px 4px;text-align:center;vertical-align:middle}
+  table.reg th{background:#f0f2f7;font-weight:800}
+  table.reg td.name,table.reg th.name{text-align:left;padding-left:8px;min-width:200px}
+  table.reg td.no,table.reg th.no{width:32px}
+  table.reg tbody tr:nth-child(even){background:#fafbfd}
+  .tot{background:#f0f2f7;font-weight:800}
+  .foot{display:flex;justify-content:space-between;margin-top:18px;font-size:12px}
+  .sig{border-top:1px solid #000;padding-top:4px;min-width:220px;text-align:center;margin-top:26px}
+  .page-break{page-break-before:always}
+  .half-title{font-size:12px;font-weight:800;color:#333;margin:0 0 6px;text-transform:uppercase;letter-spacing:.05em}
+
+  /* ---- print ---- */
+  @media print{
+    @page{size:A4 landscape;margin:10mm}
+    body{background:#fff}
+    .controls,.no-print,.top{display:none!important}
+    .sheet{border:0;margin:0;padding:0;max-width:none}
+    table.reg{font-size:11px}
+    table.reg th,table.reg td{padding:3px 2px}
+  }
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel no-print">
+    <h1>Class register</h1>
+    <p class="lede">Print a blank attendance sheet for the month. Mark it by hand in class, then enter the totals into the system.</p>
+
+    <div class="controls">
+      <label>Class <select id="fClass"><option value="">—</option></select></label>
+      <label>Session <select id="fSession"><option value="">—</option></select></label>
+      <label>Term
+        <select id="fTerm"><option>First</option><option>Second</option><option>Third</option></select>
+      </label>
+      <label>Month
+        <select id="fMonth">
+          <option value="1">January</option>
+          <option value="2">February</option>
+          <option value="3">March</option>
+          <option value="4">April</option>
+          <option value="5">May</option>
+          <option value="6">June</option>
+          <option value="7">July</option>
+          <option value="8">August</option>
+          <option value="9">September</option>
+          <option value="10">October</option>
+          <option value="11">November</option>
+          <option value="12">December</option>
+        </select>
+      </label>
+      <label>Year <input type="number" id="fYear" min="2020" max="2100" value="2026"></label>
+    </div>
+
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="btn primary" id="previewBtn" type="button">Preview</button>
+      <button class="btn" id="printBtn" type="button">Print</button>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+  </section>
+
+  <div id="sheetHolder"></div>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let context = null;
+
+// role-aware nav
+(async () => {
+  try {
+    const { user } = await API.get("/api/me");
+    const nav = user.role === "admin"
+      ? renderAdminNav(location.pathname)
+      : renderTeacherNav(location.pathname);
+    document.getElementById("main").insertBefore(nav, document.getElementById("main").firstChild);
+  } catch {}
+})();
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadRefs() {
+  context = await API.get("/api/register/context");
+  const cls = await API.get("/api/teacher/classes");
+  const fill = (sel, items, label) => {
+    sel.innerHTML = `<option value="">—</option>`;
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.id; o.textContent = label(it); sel.appendChild(o);
+    }
+  };
+  fill($("#fClass"), cls.classes, c => `${c.name} ${c.arm || ""}`.trim());
+
+  const sess = context.sessions || [];
+  const ssel = $("#fSession");
+  ssel.innerHTML = `<option value="">—</option>`;
+  for (const s of sess) {
+    const o = document.createElement("option");
+    o.value = s.id;
+    o.textContent = `${s.name} — ${s.term}${s.is_current ? " (current)" : ""}`;
+    ssel.appendChild(o);
+  }
+  const cur = sess.find(s => s.is_current);
+  if (cur) { ssel.value = cur.id; $("#fTerm").value = cur.term; }
+}
+
+function daysInMonth(year, month) {
+  return new Date(year, month, 0).getDate();
+}
+
+function renderSheet() {
+  const holder = $("#sheetHolder");
+  const classId = $("#fClass").value;
+  const sessionId = $("#fSession").value;
+  const term = $("#fTerm").value;
+  const month = Number($("#fMonth").value);
+  const year = Number($("#fYear").value);
+
+  if (!classId || !sessionId) {
+    $("#msg").textContent = "Pick a class and a session first.";
+    $("#msg").className = "msg err"; $("#msg").hidden = false;
+    return;
+  }
+
+  const monthName = $("#fMonth").selectedOptions[0].textContent;
+  const totalDays = daysInMonth(year, month);
+  const settings = context.settings || {};
+  const headTitle = settings.head_title || (settings.school_level === "primary" ? "Head Teacher" : "Principal");
+
+  API.get("/api/register/students?class_id=" + classId).then(({ class: klass, students }) => {
+    if (!students.length) {
+      $("#msg").textContent = "No active students in this class.";
+      $("#msg").className = "msg err"; $("#msg").hidden = false;
+      holder.innerHTML = "";
+      return;
+    }
+    $("#msg").hidden = true;
+
+    const sessionLabel = (context.sessions.find(s => String(s.id) === String(sessionId)) || {});
+    const sheetMeta = `
+      <div class="meta">
+        <div><strong>Class:</strong> ${escapeHtml(klass.name + " " + (klass.arm || ""))}</div>
+        <div><strong>Term:</strong> ${escapeHtml(sessionLabel.name || "")} · ${escapeHtml(term)}</div>
+        <div><strong>Month:</strong> ${escapeHtml(monthName)} ${year}</div>
+        <div><strong>Form teacher:</strong> ${escapeHtml(klass.form_teacher_name || "____________________")}</div>
+      </div>`;
+
+    // Split the month into two halves (2 weeks per sheet, roughly)
+    const mid = Math.ceil(totalDays / 2);
+    const halves = [
+      { title: `Weeks 1–2 · Days 1–${mid}`, from: 1, to: mid },
+      { title: `Weeks 3–4 · Days ${mid + 1}–${totalDays}`, from: mid + 1, to: totalDays }
+    ];
+
+    const sheets = halves.map((h, idx) => {
+      const cols = [];
+      for (let d = h.from; d <= h.to; d++) {
+        const dow = new Date(year, month - 1, d).getDay();
+        const isWeekend = dow === 0 || dow === 6;
+        cols.push({ d, weekend: isWeekend });
+      }
+      const headerDays = cols.map(c =>
+        `<th${c.weekend ? ' style="background:#e6e9f0"' : ''}>${c.d}</th>`
+      ).join("");
+
+      const rows = students.map((s, i) => {
+        const cells = cols.map(c => `<td${c.weekend ? ' style="background:#f4f5f9"' : ''}></td>`).join("");
+        return `<tr>
+          <td class="no">${i + 1}</td>
+          <td class="no">${escapeHtml(s.admission_no)}</td>
+          <td class="name">${escapeHtml(s.full_name)}</td>
+          ${cells}
+          <td class="tot"></td>
+          <td class="tot"></td>
+        </tr>`;
+      }).join("");
+
+      return `
+        <div class="sheet${idx > 0 ? " page-break" : ""}">
+          <div class="sheet-head">
+            <h1>${escapeHtml(settings.school_name || "School")}</h1>
+            <div class="sub">${escapeHtml(settings.address || "")}</div>
+            <div class="title">Class Attendance Register — ${escapeHtml(monthName)} ${year}</div>
+            <div class="sub">${escapeHtml(h.title)}</div>
+          </div>
+          ${sheetMeta}
+          <table class="reg">
+            <thead>
+              <tr>
+                <th class="no">#</th>
+                <th class="no">Adm No</th>
+                <th class="name">Student name</th>
+                ${headerDays}
+                <th>P</th><th>A</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="foot">
+            <div class="sig">Teacher's signature</div>
+            <div class="sig">${escapeHtml(headTitle)}'s signature</div>
+          </div>
+        </div>`;
+    }).join("");
+
+    holder.innerHTML = sheets;
+  }).catch(e => {
+    $("#msg").textContent = e.message;
+    $("#msg").className = "msg err"; $("#msg").hidden = false;
+  });
+}
+
+$("#previewBtn").onclick = renderSheet;
+$("#printBtn").onclick = () => {
+  if (!$("#sheetHolder").innerHTML.trim()) renderSheet();
+  setTimeout(() => window.print(), 150);
+};
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["teacher", "admin"]);
+  if (!me) return;
+  await loadRefs();
+  // default month/year
+  const now = new Date();
+  $("#fMonth").value = now.getMonth() + 1;
+  $("#fYear").value = now.getFullYear();
+})();
+</script>
+</body>
+</html>

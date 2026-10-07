@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Publish results — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;font-weight:700;font-size:.9rem;gap:4px}
+  .controls select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);min-width:180px}
+  .tabs{display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+  .tab{padding:8px 14px;border:1px solid var(--line);border-bottom:0;border-radius:8px 8px 0 0;background:var(--bg);cursor:pointer;font-weight:700;font-size:.9rem}
+  .tab.active{background:var(--surface);color:var(--primary);box-shadow:0 -3px 0 var(--primary) inset}
+  .card{border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:10px;background:var(--surface)}
+  .card-head{display:flex;gap:14px;justify-content:space-between;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+  .card-head strong{font-size:1rem}
+  .card-head .meta{color:var(--muted);font-size:.88rem}
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.8rem;font-weight:700}
+  .pill.pub{background:var(--ok-bg);color:var(--ok)}
+  .pill.draft{background:var(--flag-bg);color:var(--flag)}
+  .cgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .cbox textarea{width:100%;min-height:70px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-family:inherit;font-size:.92rem}
+  .cbox .row{display:flex;gap:6px;align-items:center;margin-bottom:4px;flex-wrap:wrap}
+  .cbox .preset{padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);font-size:.8rem;cursor:pointer}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  @media(max-width:760px){ .cgrid{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Publish results</h1>
+    <p class="lede">Write comments, then publish to freeze the report. Students and parents can then view it.</p>
+
+    <div class="controls">
+      <label>Class <select id="fClass"><option value="">—</option></select></label>
+      <label>Session <select id="fSession"><option value="">—</option></select></label>
+      <label>Term
+        <select id="fTerm"><option>First</option><option>Second</option><option>Third</option></select>
+      </label>
+    </div>
+
+    <div class="tabs">
+      <div class="tab" data-type="midterm">Midterm</div>
+      <div class="tab active" data-type="end_of_term">End of term</div>
+    </div>
+
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:12px">
+      <button class="btn" id="applyTeacherAll">Apply teacher comment to all</button>
+      <button class="btn" id="applyHeadAll">Apply head comment to all</button>
+      <button class="btn primary" id="publishAll">Publish all</button>
+      <button class="btn danger" id="unpublishAll">Unpublish all</button>
+    </div>
+
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:14px">
+      <label class="muted" style="font-weight:400">Teacher preset:</label>
+      <select id="presetTeacher"><option value="">— choose —</option></select>
+      <label class="muted" style="font-weight:400">Head preset:</label>
+      <select id="presetHead"><option value="">— choose —</option></select>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <div id="body"><p class="muted">Choose a class, session and term above.</p></div>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let classes = [];
+let sessions = [];
+let currentType = "end_of_term";
+let cards = {};   // student_id -> { teacher_comment, head_comment, published }
+
+const TEACHER_PRESETS = [
+  "Excellent performance. Keep it up.",
+  "Very good result. A little more effort will yield top spot.",
+  "Good result. Can do better with more consistency.",
+  "Fair performance. Needs more attention to weak subjects.",
+  "Result is below expectation. Must work much harder next term."
+];
+const HEAD_PRESETS = [
+  "An excellent result. Congratulations.",
+  "A very good result. Sustained effort will earn you the top position.",
+  "Good result. Keep working hard.",
+  "Fair result. You can do better.",
+  "Result is not satisfactory. Improvement is required."
+];
+
+document.getElementById("main").insertBefore(renderAdminNav("/admin/publish.html"), document.getElementById("main").firstChild);
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+function fillPresets() {
+  const t = $("#presetTeacher"), h = $("#presetHead");
+  for (const p of TEACHER_PRESETS) { const o = document.createElement("option"); o.value = p; o.textContent = p.slice(0, 50) + (p.length > 50 ? "…" : ""); t.appendChild(o); }
+  for (const p of HEAD_PRESETS)    { const o = document.createElement("option"); o.value = p; o.textContent = p.slice(0, 50) + (p.length > 50 ? "…" : ""); h.appendChild(o); }
+}
+
+async function loadRefs() {
+  const [cls, sess] = await Promise.all([
+    API.get("/api/teacher/classes"),
+    API.get("/api/teacher/sessions")
+  ]);
+  classes = cls.classes || [];
+  sessions = sess.sessions || [];
+
+  const fill = (sel, items, label) => {
+    sel.innerHTML = `<option value="">—</option>`;
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.id; o.textContent = label(it); sel.appendChild(o);
+    }
+  };
+  fill($("#fClass"),   classes,  c => `${c.name} ${c.arm || ""}`.trim());
+  fill($("#fSession"), sessions, s => `${s.name} — ${s.term}${s.is_current ? " (current)" : ""}`);
+  const cur = sessions.find(s => s.is_current);
+  if (cur) $("#fSession").value = cur.id;
+}
+
+function allChosen() { return $("#fClass").value && $("#fSession").value && $("#fTerm").value; }
+
+async function load() {
+  if (!allChosen()) return;
+  const body = $("#body");
+  body.innerHTML = `<p class="muted">Loading…</p>`;
+  try {
+    const params = new URLSearchParams({
+      class_id: $("#fClass").value,
+      session_id: $("#fSession").value,
+      term: $("#fTerm").value,
+      type: currentType
+    });
+    const [rc, cm] = await Promise.all([
+      API.get("/api/results/class?" + params.toString()),
+      API.get("/api/results/comments?" + params.toString())
+    ]);
+
+    cards = {};
+    for (const c of cm.cards) cards[c.student_id] = c;
+
+    body.innerHTML = "";
+    if (!rc.students.length) { body.innerHTML = `<p class="muted">No students in this class.</p>`; return; }
+
+    for (const s of rc.students) {
+      const sid = s.student.id;
+      const c = cards[sid] || { teacher_comment: "", head_comment: "", published: 0 };
+      const card = document.createElement("div");
+      card.className = "card";
+      card.dataset.sid = sid;
+      const pubClass = c.published ? "pub" : "draft";
+      const pubText  = c.published ? "Published" : "Draft";
+      card.innerHTML = `
+        <div class="card-head">
+          <div>
+            <strong>${escapeHtml(s.student.full_name)}</strong>
+            <div class="meta">${escapeHtml(s.student.admission_no)} · ${s.summary.percentage}% · avg ${s.summary.average}</div>
+          </div>
+          <span class="pill ${pubClass}" data-pill>${pubText}</span>
+        </div>
+        <div class="cgrid">
+          <div class="cbox">
+            <div class="row"><strong style="font-size:.9rem">Teacher's comment</strong></div>
+            <textarea class="teacher">${escapeHtml(c.teacher_comment || "")}</textarea>
+          </div>
+          <div class="cbox">
+            <div class="row"><strong style="font-size:.9rem">Head's comment</strong></div>
+            <textarea class="head">${escapeHtml(c.head_comment || "")}</textarea>
+          </div>
+        </div>`;
+      body.appendChild(card);
+    }
+  } catch (e) {
+    body.innerHTML = `<p class="muted">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+function collectCards() {
+  const out = [];
+  document.querySelectorAll(".card").forEach(card => {
+    out.push({
+      student_id: Number(card.dataset.sid),
+      teacher_comment: card.querySelector(".teacher").value.trim() || null,
+      head_comment: card.querySelector(".head").value.trim() || null
+    });
+  });
+  return out;
+}
+
+async function publishAll() {
+  if (!allChosen()) return;
+  try {
+    const r = await API.post("/api/results/publish", {
+      class_id: Number($("#fClass").value),
+      session_id: Number($("#fSession").value),
+      term: $("#fTerm").value,
+      type: currentType,
+      cards: collectCards()
+    });
+    flash(`Published ${r.published} report(s). Head label: ${r.head_label_used}`, "ok");
+    load();
+  } catch (e) { flash(e.message, "err"); }
+}
+
+async function unpublishAll() {
+  if (!allChosen()) return;
+  if (!confirm("Unpublish all reports for this class/term/type?")) return;
+  try {
+    const r = await API.post("/api/results/unpublish", {
+      class_id: Number($("#fClass").value),
+      session_id: Number($("#fSession").value),
+      term: $("#fTerm").value,
+      type: currentType
+    });
+    flash(`Unpublished ${r.unpublished} report(s).`, "ok");
+    load();
+  } catch (e) { flash(e.message, "err"); }
+}
+
+function applyToAll(selector, value) {
+  if (!value) return;
+  document.querySelectorAll(selector).forEach(el => el.value = value);
+}
+
+function flash(text, kind) {
+  const m = $("#msg");
+  m.textContent = text;
+  m.className = "msg " + (kind || "ok");
+  m.hidden = false;
+  setTimeout(() => { m.hidden = true; }, 4000);
+}
+
+document.querySelectorAll(".tab").forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    t.classList.add("active");
+    currentType = t.dataset.type;
+    load();
+  };
+});
+
+$("#publishAll").onclick = publishAll;
+$("#unpublishAll").onclick = unpublishAll;
+$("#applyTeacherAll").onclick = () => applyToAll(".teacher", $("#presetTeacher").value);
+$("#applyHeadAll").onclick = () => applyToAll(".head", $("#presetHead").value);
+$("#fClass").onchange = load;
+$("#fSession").onchange = load;
+$("#fTerm").onchange = load;
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["admin"]);
+  if (!me) return;
+  fillPresets();
+  await loadRefs();
+})();
+</script>
+</body>
+</html>

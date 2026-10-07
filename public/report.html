@@ -1,0 +1,16 @@
+const reportHtml = require("./report-html");
+
+app.get("/report", (req, res) => {
+  const token = req.query.t;
+  if (!token) return res.status(400).send("Missing token");
+  const out = reportHtml.renderReportForToken(token);
+  res.status(out.status).type("html").send(out.html);
+});
+
+// also accept /report.html?t=...
+app.get("/report.html", (req, res) => {
+  const token = req.query.t;
+  if (!token) return res.status(400).send("Missing token");
+  const out = reportHtml.renderReportForToken(token);
+  res.status(out.status).type("html").send(out.html);
+});

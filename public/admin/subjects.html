@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subjects — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Subjects</h1>
+    <p class="lede">Add subjects with a short code (e.g. MTH) and class level.</p>
+
+    <form id="createForm" class="row" style="margin-bottom:16px">
+      <input type="text" id="name" placeholder="Subject name" required>
+      <input type="text" id="code" placeholder="Code" style="width:100px">
+      <select id="level">
+        <option value="secondary">Secondary</option>
+        <option value="primary">Primary</option>
+        <option value="both">Both</option>
+      </select>
+      <button class="btn primary" type="submit">Add subject</button>
+    </form>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <table class="tbl">
+      <thead><tr><th>Subject</th><th>Code</th><th>Level</th><th>Actions</th></tr></thead>
+      <tbody id="body"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+loadUserHeader("#hdr");
+$("#main").insertBefore(renderAdminNav("/admin/subjects.html"), $("#main").firstChild);
+
+async function load() {
+  const body = $("#body");
+  try {
+    const { subjects } = await API.get("/api/admin/academic/subjects");
+    if (!subjects.length) { body.innerHTML = `<tr><td colspan="4" class="muted">No subjects yet.</td></tr>`; return; }
+    body.innerHTML = "";
+    for (const s of subjects) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${s.name}</td><td>${s.code || ""}</td><td>${s.class_level}</td><td></td>`;
+      const td = tr.lastElementChild;
+      const del = document.createElement("button");
+      del.className = "btn danger";
+      del.textContent = "Delete";
+      del.onclick = async () => {
+        if (!confirm(`Delete ${s.name}?`)) return;
+        try { await API.del(`/api/admin/academic/subjects/${s.id}`); load(); }
+        catch (e) { alert(e.message); }
+      };
+      td.appendChild(del);
+      body.appendChild(tr);
+    }
+  } catch (e) { body.innerHTML = `<tr><td colspan="4" class="muted">${e.message}</td></tr>`; }
+}
+
+$("#createForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#msg"); msg.hidden = true;
+  try {
+    await API.post("/api/admin/academic/subjects", {
+      name: $("#name").value.trim(),
+      code: $("#code").value.trim() || null,
+      class_level: $("#level").value
+    });
+    $("#createForm").reset();
+    load();
+  } catch (err) {
+    msg.textContent = err.message; msg.className = "msg err"; msg.hidden = false;
+  }
+});
+
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+load();
+</script>
+</body>
+</html>

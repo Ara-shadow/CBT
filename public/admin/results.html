@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Results — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;font-weight:700;font-size:.9rem;gap:4px}
+  .controls select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);min-width:200px}
+  .totals{display:flex;gap:20px;color:var(--muted);font-size:.92rem;margin:10px 0 16px}
+  .totals strong{color:var(--ink)}
+  .tabs{display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+  .tab{padding:8px 14px;border:1px solid var(--line);border-bottom:0;border-radius:8px 8px 0 0;background:var(--bg);cursor:pointer;font-weight:700;font-size:.9rem}
+  .tab.active{background:var(--surface);color:var(--primary);box-shadow:0 -3px 0 var(--primary) inset}
+  dialog{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);max-width:900px;width:calc(100% - 32px);padding:22px;max-height:88vh;overflow:auto}
+  dialog::backdrop{background:rgba(10,16,32,.6)}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Results</h1>
+    <p class="lede">Class-wide result sheet. Click any student to see the full breakdown.</p>
+
+    <div class="controls">
+      <label>Class <select id="fClass"><option value="">—</option></select></label>
+      <label>Session <select id="fSession"><option value="">—</option></select></label>
+      <label>Term
+        <select id="fTerm"><option>First</option><option>Second</option><option>Third</option></select>
+      </label>
+    </div>
+
+    <div class="tabs">
+      <div class="tab" data-type="midterm">Midterm (out of 40)</div>
+      <div class="tab active" data-type="end_of_term">End of term (out of 100)</div>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+    <div class="totals" id="totals"></div>
+
+    <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead id="thead"><tr><th>Student</th></tr></thead>
+        <tbody id="body"><tr><td class="muted">Choose a class, session and term.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<dialog id="detail">
+  <h2 id="detailTitle">Student detail</h2>
+  <div class="detail-summary" id="detailSummary"></div>
+  <div id="detailBody"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:16px">
+    <button class="btn" id="detailClose" type="button">Close</button>
+  </div>
+</dialog>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let classes = [];
+let sessions = [];
+let currentType = "end_of_term";
+let currentData = null;
+
+document.getElementById("main").insertBefore(renderAdminNav("/admin/results.html"), document.getElementById("main").firstChild);
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadRefs() {
+  const [cls, sess] = await Promise.all([
+    API.get("/api/teacher/classes"),
+    API.get("/api/teacher/sessions")
+  ]);
+  classes = cls.classes || [];
+  sessions = sess.sessions || [];
+
+  const fill = (sel, items, label) => {
+    sel.innerHTML = `<option value="">—</option>`;
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.id;
+      o.textContent = label(it);
+      sel.appendChild(o);
+    }
+  };
+  fill($("#fClass"),   classes,  c => `${c.name} ${c.arm || ""}`.trim());
+  fill($("#fSession"), sessions, s => `${s.name} — ${s.term}${s.is_current ? " (current)" : ""}`);
+
+  const cur = sessions.find(s => s.is_current);
+  if (cur) $("#fSession").value = cur.id;
+}
+
+function allChosen() { return $("#fClass").value && $("#fSession").value && $("#fTerm").value; }
+
+async function load() {
+  if (!allChosen()) return;
+  const body = $("#body");
+  try {
+    const params = new URLSearchParams({
+      class_id: $("#fClass").value,
+      session_id: $("#fSession").value,
+      term: $("#fTerm").value,
+      type: currentType
+    });
+    const data = await API.get("/api/results/class?" + params.toString());
+    currentData = data;
+
+    $("#totals").innerHTML =
+      `<span>Class average: <strong>${data.class_average}%</strong></span>
+       <span>Class highest: <strong>${data.class_highest}%</strong></span>
+       <span>Students: <strong>${data.students.length}</strong></span>`;
+
+    if (!data.students.length) {
+      body.innerHTML = `<tr><td colspan="5" class="muted">No active students in this class.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const s of data.students) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${escapeHtml(s.student.full_name)}<div class="muted" style="font-size:.82rem">${escapeHtml(s.student.admission_no)}</div></td>
+        <td>${s.summary.subjects_count}</td>
+        <td>${s.summary.sum_scores}</td>
+        <td>${s.summary.average}</td>
+        <td><strong>${s.summary.percentage}%</strong></td>`;
+      tr.style.cursor = "pointer";
+      tr.onclick = () => openDetail(s);
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+function openDetail(s) {
+  $("#detailTitle").textContent = s.student.full_name + " — " + (currentType === "midterm" ? "Midterm" : "End of term");
+  $("#detailSummary").innerHTML =
+    `<span>Percentage: <strong>${s.summary.percentage}%</strong></span>
+     <span>Class average: <strong>${currentData.class_average}%</strong></span>
+     <span>Class highest: <strong>${currentData.class_highest}%</strong></span>`;
+
+  const rows = s.subjects.map(sub => {
+    if (currentType === "midterm") {
+      return `<tr><td>${escapeHtml(sub.subject_name)}</td>
+        <td>${sub.ca1}</td><td>${sub.ca2}</td><td>${sub.project}</td>
+        <td><strong>${sub.midterm_total}</strong></td>
+        <td><strong>${sub.grade}</strong></td><td>${escapeHtml(sub.remark)}</td></tr>`;
+    }
+    return `<tr><td>${escapeHtml(sub.subject_name)}</td>
+      <td>${sub.midterm_total}</td><td>${sub.cbt_score}</td><td>${sub.pbt_score}</td>
+      <td>${sub.exam_score}</td><td><strong>${sub.term_total}</strong></td>
+      <td><strong>${sub.grade}</strong></td><td>${escapeHtml(sub.remark)}</td></tr>`;
+  }).join("");
+
+  const header = currentType === "midterm"
+    ? `<tr><th>Subject</th><th>CA1</th><th>CA2</th><th>Proj</th><th>Midterm /40</th><th>Grade</th><th>Remark</th></tr>`
+    : `<tr><th>Subject</th><th>Midterm /40</th><th>CBT /30</th><th>PBT /30</th><th>Exam /60</th><th>Total /100</th><th>Grade</th><th>Remark</th></tr>`;
+
+  const att = s.attendance;
+  $("#detailBody").innerHTML = `
+    <table class="tbl"><thead>${header}</thead><tbody>${rows}</tbody></table>
+    <p class="muted">Attendance — opened: ${att.days_school_opened}, closed: ${att.days_school_closed}, present: ${att.days_present}, absent: ${att.days_absent}</p>`;
+
+  $("#detail").showModal();
+}
+
+document.querySelectorAll(".tab").forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    t.classList.add("active");
+    currentType = t.dataset.type;
+    load();
+  };
+});
+
+$("#detailClose").onclick = () => $("#detail").close();
+$("#fClass").onchange = load;
+$("#fSession").onchange = load;
+$("#fTerm").onchange = load;
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["admin"]);
+  if (!me) return;
+  await loadRefs();
+})();
+</script>
+</body>
+</html>

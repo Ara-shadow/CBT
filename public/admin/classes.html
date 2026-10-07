@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Classes — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Classes</h1>
+    <p class="lede">Add class names with arms (e.g. JSS1 A), level, and optional form teacher.</p>
+
+    <form id="createForm" class="row" style="margin-bottom:16px">
+      <input type="text" id="name" placeholder="Class name e.g. JSS1" required style="width:140px">
+      <input type="text" id="arm" placeholder="Arm e.g. A" style="width:100px">
+      <select id="level">
+        <option value="secondary">Secondary</option>
+        <option value="primary">Primary</option>
+      </select>
+      <select id="formTeacher"><option value="">(no form teacher)</option></select>
+      <button class="btn primary" type="submit">Add class</button>
+    </form>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <table class="tbl">
+      <thead><tr><th>Class</th><th>Arm</th><th>Level</th><th>Form teacher</th><th>Actions</th></tr></thead>
+      <tbody id="body"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+loadUserHeader("#hdr");
+$("#main").insertBefore(renderAdminNav("/admin/classes.html"), $("#main").firstChild);
+
+async function loadTeachers() {
+  const { teachers } = await API.get("/api/admin/academic/teachers");
+  const sel = $("#formTeacher");
+  sel.innerHTML = `<option value="">(no form teacher)</option>`;
+  for (const t of teachers) {
+    const o = document.createElement("option");
+    o.value = t.id; o.textContent = t.full_name;
+    sel.appendChild(o);
+  }
+}
+
+async function load() {
+  const body = $("#body");
+  try {
+    const { classes } = await API.get("/api/admin/academic/classes");
+    if (!classes.length) { body.innerHTML = `<tr><td colspan="5" class="muted">No classes yet.</td></tr>`; return; }
+    body.innerHTML = "";
+    for (const c of classes) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${c.name}</td>
+        <td>${c.arm || ""}</td>
+        <td>${c.level}</td>
+        <td>${c.form_teacher_name || '<span class="muted">—</span>'}</td>
+        <td></td>`;
+      const td = tr.lastElementChild;
+      const del = document.createElement("button");
+      del.className = "btn danger";
+      del.textContent = "Delete";
+      del.onclick = async () => {
+        if (!confirm(`Delete ${c.name} ${c.arm || ""}?`)) return;
+        try { await API.del(`/api/admin/academic/classes/${c.id}`); load(); }
+        catch (e) { alert(e.message); }
+      };
+      td.appendChild(del);
+      body.appendChild(tr);
+    }
+  } catch (e) { body.innerHTML = `<tr><td colspan="5" class="muted">${e.message}</td></tr>`; }
+}
+
+$("#createForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#msg"); msg.hidden = true;
+  try {
+    await API.post("/api/admin/academic/classes", {
+      name: $("#name").value.trim(),
+      arm: $("#arm").value.trim() || null,
+      level: $("#level").value,
+      form_teacher_id: $("#formTeacher").value ? Number($("#formTeacher").value) : null
+    });
+    $("#createForm").reset();
+    load();
+  } catch (err) {
+    msg.textContent = err.message; msg.className = "msg err"; msg.hidden = false;
+  }
+});
+
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+loadTeachers(); load();
+</script>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assignments — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Class–subject assignments</h1>
+    <p class="lede">Pick a class, a subject, and the teacher who teaches it.</p>
+
+    <form id="createForm" class="row" style="margin-bottom:16px">
+      <select id="classId" required><option value="">Select class…</option></select>
+      <select id="subjectId" required><option value="">Select subject…</option></select>
+      <select id="teacherId"><option value="">(no teacher yet)</option></select>
+      <button class="btn primary" type="submit">Assign</button>
+    </form>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <table class="tbl">
+      <thead><tr><th>Class</th><th>Subject</th><th>Teacher</th><th>Actions</th></tr></thead>
+      <tbody id="body"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+loadUserHeader("#hdr");
+$("#main").insertBefore(renderAdminNav("/admin/class-subjects.html"), $("#main").firstChild);
+
+async function loadOptions() {
+  const [c, s, t] = await Promise.all([
+    API.get("/api/admin/academic/classes"),
+    API.get("/api/admin/academic/subjects"),
+    API.get("/api/admin/academic/teachers")
+  ]);
+  const classSel = $("#classId");
+  classSel.innerHTML = `<option value="">Select class…</option>`;
+  for (const x of c.classes) {
+    const o = document.createElement("option");
+    o.value = x.id; o.textContent = `${x.name} ${x.arm || ""}`.trim();
+    classSel.appendChild(o);
+  }
+  const subSel = $("#subjectId");
+  subSel.innerHTML = `<option value="">Select subject…</option>`;
+  for (const x of s.subjects) {
+    const o = document.createElement("option");
+    o.value = x.id; o.textContent = x.name + (x.code ? ` (${x.code})` : "");
+    subSel.appendChild(o);
+  }
+  const tSel = $("#teacherId");
+  tSel.innerHTML = `<option value="">(no teacher yet)</option>`;
+  for (const x of t.teachers) {
+    const o = document.createElement("option");
+    o.value = x.id; o.textContent = x.full_name;
+    tSel.appendChild(o);
+  }
+}
+
+async function load() {
+  const body = $("#body");
+  try {
+    const { assignments } = await API.get("/api/admin/academic/class-subjects");
+    if (!assignments.length) { body.innerHTML = `<tr><td colspan="4" class="muted">No assignments yet.</td></tr>`; return; }
+    body.innerHTML = "";
+    for (const a of assignments) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${a.class_name} ${a.class_arm || ""}</td>
+        <td>${a.subject_name}${a.subject_code ? ` (${a.subject_code})` : ""}</td>
+        <td>${a.teacher_name || '<span class="muted">—</span>'}</td>
+        <td></td>`;
+      const td = tr.lastElementChild;
+      const del = document.createElement("button");
+      del.className = "btn danger";
+      del.textContent = "Remove";
+      del.onclick = async () => {
+        if (!confirm("Remove this assignment?")) return;
+        try { await API.del(`/api/admin/academic/class-subjects/${a.id}`); load(); }
+        catch (e) { alert(e.message); }
+      };
+      td.appendChild(del);
+      body.appendChild(tr);
+    }
+  } catch (e) { body.innerHTML = `<tr><td colspan="4" class="muted">${e.message}</td></tr>`; }
+}
+
+$("#createForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#msg"); msg.hidden = true;
+  try {
+    await API.post("/api/admin/academic/class-subjects", {
+      class_id: Number($("#classId").value),
+      subject_id: Number($("#subjectId").value),
+      teacher_id: $("#teacherId").value ? Number($("#teacherId").value) : null
+    });
+    load();
+  } catch (err) {
+    msg.textContent = err.message; msg.className = "msg err"; msg.hidden = false;
+  }
+});
+
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+loadOptions(); load();
+</script>
+</body>
+</html>

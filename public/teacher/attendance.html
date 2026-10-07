@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attendance — Teacher</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;font-weight:700;font-size:.9rem;gap:4px}
+  .controls select,.controls input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+  .controls input[type=number]{width:110px;text-align:center}
+  .grid-input{width:90px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);text-align:center}
+  .derived{color:var(--muted);text-align:center;font-weight:700}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Attendance summary</h1>
+    <p class="lede">Enter term-level totals for the whole class. Only “days present” varies per student.</p>
+
+    <div class="controls">
+      <label>Class <select id="fClass"><option value="">—</option></select></label>
+      <label>Session <select id="fSession"><option value="">—</option></select></label>
+      <label>Term
+        <select id="fTerm"><option>First</option><option>Second</option><option>Third</option></select>
+      </label>
+      <label>Days opened <input type="number" id="opened" min="0" value="0"></label>
+      <label>Days closed <input type="number" id="closed" min="0" value="0"></label>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" id="saveBtn" type="button">Save attendance</button>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead>
+          <tr><th>Student</th><th>Days present</th><th>Days absent</th></tr>
+        </thead>
+        <tbody id="body"><tr><td colspan="3" class="muted">Choose class, session and term above.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let classes = [];
+let sessions = [];
+
+// Role-aware nav
+(async () => {
+  try {
+    const { user } = await API.get("/api/me");
+    const nav = user.role === "admin"
+      ? renderAdminNav(location.pathname)
+      : renderTeacherNav(location.pathname);
+    document.getElementById("main").insertBefore(nav, document.getElementById("main").firstChild);
+  } catch {}
+})();
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadRefs() {
+  const [cls, sess] = await Promise.all([
+    API.get("/api/teacher/classes"),
+    API.get("/api/teacher/sessions")
+  ]);
+  classes = cls.classes || [];
+  sessions = sess.sessions || [];
+
+  const fill = (sel, items, label) => {
+    sel.innerHTML = `<option value="">—</option>`;
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.id;
+      o.textContent = label(it);
+      sel.appendChild(o);
+    }
+  };
+  fill($("#fClass"),   classes,  c => `${c.name} ${c.arm || ""}`.trim());
+  fill($("#fSession"), sessions, s => `${s.name} — ${s.term}${s.is_current ? " (current)" : ""}`);
+
+  const cur = sessions.find(s => s.is_current);
+  if (cur) $("#fSession").value = cur.id;
+}
+
+function allChosen() {
+  return $("#fClass").value && $("#fSession").value && $("#fTerm").value;
+}
+
+function recomputeAll() {
+  const opened = Number($("#opened").value || 0);
+  $("#body").querySelectorAll("tr[data-sid]").forEach(tr => {
+    const p = Math.min(opened, Math.max(0, Number(tr.querySelector(".present").value || 0)));
+    const absent = Math.max(0, opened - p);
+    tr.querySelector(".absent").textContent = absent;
+  });
+}
+
+async function load() {
+  if (!allChosen()) return;
+  const body = $("#body");
+  try {
+    const params = new URLSearchParams({
+      class_id: $("#fClass").value,
+      session_id: $("#fSession").value,
+      term: $("#fTerm").value
+    });
+    const data = await API.get("/api/scores/attendance?" + params.toString());
+    $("#opened").value = data.days_school_opened || 0;
+    $("#closed").value = data.days_school_closed || 0;
+
+    if (!data.rows.length) {
+      body.innerHTML = `<tr><td colspan="3" class="muted">No active students in this class.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const r of data.rows) {
+      const tr = document.createElement("tr");
+      tr.dataset.sid = r.student_id;
+      tr.innerHTML = `
+        <td>${escapeHtml(r.full_name)}<div class="muted" style="font-size:.82rem">${escapeHtml(r.admission_no)}</div></td>
+        <td><input class="grid-input present" type="number" min="0" value="${r.days_present}"></td>
+        <td class="derived absent">${r.days_absent}</td>`;
+      body.appendChild(tr);
+      tr.querySelector(".present").addEventListener("input", recomputeAll);
+    }
+    recomputeAll();
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="3" class="muted">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function save() {
+  if (!allChosen()) return;
+  const rows = Array.from($("#body").querySelectorAll("tr[data-sid]")).map(tr => ({
+    student_id: Number(tr.dataset.sid),
+    days_present: Number(tr.querySelector(".present").value || 0)
+  }));
+  try {
+    await API.post("/api/scores/attendance", {
+      class_id: Number($("#fClass").value),
+      session_id: Number($("#fSession").value),
+      term: $("#fTerm").value,
+      days_school_opened: Number($("#opened").value || 0),
+      days_school_closed: Number($("#closed").value || 0),
+      rows
+    });
+    flash("Attendance saved.", "ok");
+    load();
+  } catch (e) { flash(e.message, "err"); }
+}
+
+function flash(text, kind) {
+  const m = $("#msg");
+  m.textContent = text;
+  m.className = "msg " + (kind || "ok");
+  m.hidden = false;
+  setTimeout(() => { m.hidden = true; }, 3000);
+}
+
+$("#fClass").onchange = load;
+$("#fSession").onchange = load;
+$("#fTerm").onchange = load;
+$("#opened").oninput = recomputeAll;
+$("#saveBtn").onclick = save;
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["teacher", "admin"]);
+  if (!me) return;
+  await loadRefs();
+})();
+</script>
+</body>
+</html>

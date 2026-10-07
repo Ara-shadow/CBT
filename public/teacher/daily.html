@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily attendance — Teacher</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;font-weight:700;font-size:.9rem;gap:4px}
+  .controls select,.controls input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+  .day-strip{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .day-chip{padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--bg);cursor:pointer;font-size:.88rem;font-weight:700}
+  .day-chip.active{background:var(--primary);color:var(--primary-ink);border-color:var(--primary)}
+  .quick{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .status-cell{text-align:center}
+  .status-cell button{min-width:44px;min-height:38px;border:2px solid var(--line);background:var(--surface);border-radius:8px;font-weight:700;cursor:pointer;margin-right:4px;padding:0 10px}
+  .status-cell button.on-P{border-color:var(--ok);background:var(--ok-bg);color:var(--ok)}
+  .status-cell button.on-A{border-color:var(--bad);background:var(--bad-bg);color:var(--bad)}
+  .summary{color:var(--muted);font-size:.92rem;margin:8px 0 14px}
+  .summary strong{color:var(--ink)}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Daily attendance</h1>
+    <p class="lede">Mark each student P or A for a given day. Totals flow into the report card automatically.</p>
+
+    <div class="controls">
+      <label>Class <select id="fClass"><option value="">—</option></select></label>
+      <label>Session <select id="fSession"><option value="">—</option></select></label>
+      <label>Term
+        <select id="fTerm"><option>First</option><option>Second</option><option>Third</option></select>
+      </label>
+      <label>Date
+        <input type="date" id="fDate">
+      </label>
+    </div>
+
+    <div id="pastDays">
+      <div class="muted" style="font-size:.88rem;margin-bottom:6px">Days already marked (click to open):</div>
+      <div class="day-strip" id="dayStrip"></div>
+    </div>
+
+    <div class="quick" id="quickActions" hidden>
+      <button class="btn" id="allPresent" type="button">Mark all present</button>
+      <button class="btn" id="allAbsent" type="button">Mark all absent</button>
+      <button class="btn primary" id="saveBtn" type="button">Save day</button>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+    <div class="summary" id="summary"></div>
+
+    <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead>
+          <tr><th>Student</th><th>Status</th><th>Term total</th></tr>
+        </thead>
+        <tbody id="body"><tr><td colspan="3" class="muted">Choose class, session, term and date above.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let classes = [];
+let sessions = [];
+let state = { rows: [], date: null };
+
+// Role-aware nav
+(async () => {
+  try {
+    const { user } = await API.get("/api/me");
+    const nav = user.role === "admin"
+      ? renderAdminNav(location.pathname)
+      : renderTeacherNav(location.pathname);
+    document.getElementById("main").insertBefore(nav, document.getElementById("main").firstChild);
+  } catch {}
+})();
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadRefs() {
+  const [cls, sess] = await Promise.all([
+    API.get("/api/teacher/classes"),
+    API.get("/api/teacher/sessions")
+  ]);
+  classes = cls.classes || [];
+  sessions = sess.sessions || [];
+
+  const fill = (sel, items, label) => {
+    sel.innerHTML = `<option value="">—</option>`;
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.id; o.textContent = label(it); sel.appendChild(o);
+    }
+  };
+  fill($("#fClass"),   classes,  c => `${c.name} ${c.arm || ""}`.trim());
+  fill($("#fSession"), sessions, s => `${s.name} — ${s.term}${s.is_current ? " (current)" : ""}`);
+
+  const cur = sessions.find(s => s.is_current);
+  if (cur) $("#fSession").value = cur.id;
+
+  const today = new Date().toISOString().slice(0, 10);
+  $("#fDate").value = today;
+}
+
+function allChosen() {
+  return $("#fClass").value && $("#fSession").value && $("#fTerm").value && $("#fDate").value;
+}
+
+async function loadDayStrip() {
+  if (!allChosen()) { $("#dayStrip").innerHTML = ""; return; }
+  try {
+    const params = new URLSearchParams({
+      class_id: $("#fClass").value,
+      session_id: $("#fSession").value,
+      term: $("#fTerm").value
+    });
+    const { dates } = await API.get("/api/attendance/days?" + params.toString());
+    const strip = $("#dayStrip");
+    strip.innerHTML = "";
+    if (!dates.length) { strip.innerHTML = `<em class="muted">No days marked yet.</em>`; return; }
+    const current = $("#fDate").value;
+    for (const d of dates) {
+      const chip = document.createElement("div");
+      chip.className = "day-chip" + (d === current ? " active" : "");
+      chip.textContent = d;
+      chip.onclick = () => { $("#fDate").value = d; load(); };
+      strip.appendChild(chip);
+    }
+  } catch (e) { $("#dayStrip").innerHTML = `<em class="muted">${escapeHtml(e.message)}</em>`; }
+}
+
+async function load() {
+  if (!allChosen()) return;
+  const body = $("#body");
+  try {
+    const params = new URLSearchParams({
+      class_id: $("#fClass").value,
+      session_id: $("#fSession").value,
+      term: $("#fTerm").value,
+      date: $("#fDate").value
+    });
+    const data = await API.get("/api/attendance/day?" + params.toString());
+    state.rows = data.students;
+    state.date = data.date;
+
+    if (!data.students.length) {
+      body.innerHTML = `<tr><td colspan="3" class="muted">No active students in this class.</td></tr>`;
+      $("#quickActions").hidden = true;
+      updateSummary();
+      return;
+    }
+    $("#quickActions").hidden = false;
+    body.innerHTML = "";
+    for (const s of data.students) {
+      const tr = document.createElement("tr");
+      tr.dataset.sid = s.student_id;
+      tr.innerHTML = `
+        <td>${escapeHtml(s.full_name)}<div class="muted" style="font-size:.82rem">${escapeHtml(s.admission_no)}</div></td>
+        <td class="status-cell">
+          <button type="button" data-v="P" class="${s.status === 'P' ? 'on-P' : ''}">P</button>
+          <button type="button" data-v="A" class="${s.status === 'A' ? 'on-A' : ''}">A</button>
+        </td>
+        <td class="term-total muted">—</td>`;
+      tr.querySelectorAll(".status-cell button").forEach(b => {
+        b.onclick = () => {
+          const cur = tr.dataset.status;
+          const v = b.dataset.v;
+          tr.dataset.status = (cur === v ? "" : v);
+          tr.querySelectorAll(".status-cell button").forEach(x => x.className = "");
+          if (tr.dataset.status) tr.querySelector(`button[data-v="${tr.dataset.status}"]`).classList.add("on-" + tr.dataset.status);
+          updateSummary();
+        };
+      });
+      tr.dataset.status = s.status || "";
+      body.appendChild(tr);
+    }
+    updateSummary();
+    loadDayStrip();
+    loadTermTotals();
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="3" class="muted">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function loadTermTotals() {
+  try {
+    const params = new URLSearchParams({
+      class_id: $("#fClass").value,
+      session_id: $("#fSession").value,
+      term: $("#fTerm").value
+    });
+    const data = await API.get("/api/scores/attendance?" + params.toString());
+    const byId = new Map(data.rows.map(r => [r.student_id, r]));
+    $("#body").querySelectorAll("tr[data-sid]").forEach(tr => {
+      const sid = Number(tr.dataset.sid);
+      const r = byId.get(sid);
+      if (r) tr.querySelector(".term-total").textContent = `${r.days_present} P / ${r.days_absent} A`;
+    });
+  } catch { /* silent */ }
+}
+
+function updateSummary() {
+  const rows = $("#body").querySelectorAll("tr[data-sid]");
+  let p = 0, a = 0, u = 0;
+  rows.forEach(tr => {
+    const s = tr.dataset.status;
+    if (s === "P") p++; else if (s === "A") a++; else u++;
+  });
+  $("#summary").innerHTML = `Present: <strong>${p}</strong> · Absent: <strong>${a}</strong> · Not marked: <strong>${u}</strong>`;
+}
+
+async function save() {
+  if (!allChosen()) return;
+  const rows = Array.from($("#body").querySelectorAll("tr[data-sid]")).map(tr => ({
+    student_id: Number(tr.dataset.sid),
+    status: tr.dataset.status || null
+  }));
+  try {
+    await API.post("/api/attendance/day", {
+      class_id: Number($("#fClass").value),
+      session_id: Number($("#fSession").value),
+      term: $("#fTerm").value,
+      date: $("#fDate").value,
+      rows
+    });
+    flash("Attendance saved.", "ok");
+    loadDayStrip();
+    loadTermTotals();
+  } catch (e) { flash(e.message, "err"); }
+}
+
+async function markAll(status) {
+  if (!allChosen()) return;
+  try {
+    const r = await API.post("/api/attendance/day/mark-all", {
+      class_id: Number($("#fClass").value),
+      session_id: Number($("#fSession").value),
+      term: $("#fTerm").value,
+      date: $("#fDate").value,
+      status
+    });
+    flash(`Marked ${r.count} student(s) as ${status}.`, "ok");
+    load();
+  } catch (e) { flash(e.message, "err"); }
+}
+
+function flash(text, kind) {
+  const m = $("#msg");
+  m.textContent = text;
+  m.className = "msg " + (kind || "ok");
+  m.hidden = false;
+  setTimeout(() => { m.hidden = true; }, 3000);
+}
+
+$("#fClass").onchange = load;
+$("#fSession").onchange = load;
+$("#fTerm").onchange = load;
+$("#fDate").onchange = load;
+$("#saveBtn").onclick = save;
+$("#allPresent").onclick = () => markAll("P");
+$("#allAbsent").onclick  = () => markAll("A");
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["teacher", "admin"]);
+  if (!me) return;
+  await loadRefs();
+})();
+</script>
+</body>
+</html>

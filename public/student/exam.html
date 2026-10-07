@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exam — CBT</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .exam-top{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--line)}
+  .exam-top .wrap{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px}
+  .timer{font-variant-numeric:tabular-nums;font-weight:700;font-size:1.5rem;padding:4px 14px;border-radius:8px;border:2px solid var(--line);min-width:120px;text-align:center}
+  .timer.low{border-color:var(--flag);color:var(--flag);background:var(--flag-bg)}
+  .timer.crit{border-color:var(--bad);color:var(--bad);background:var(--bad-bg)}
+  .layout{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:16px;align-items:start}
+  .qmeta{display:flex;flex-wrap:wrap;gap:6px 16px;color:var(--muted);font-size:.92rem;margin-bottom:12px}
+  .stem{font-size:1.2rem;line-height:1.55;margin:0 0 18px;white-space:pre-wrap}
+  .opts{display:grid;gap:10px;margin:0;padding:0;list-style:none}
+  .opt{width:100%;text-align:left;display:flex;gap:14px;align-items:flex-start;padding:12px 14px;border:2px solid var(--line);background:var(--surface);border-radius:10px;cursor:pointer;min-height:52px}
+  .opt:hover{border-color:var(--primary)}
+  .opt .k{flex:0 0 auto;width:32px;height:32px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;font-weight:700}
+  .opt[aria-checked=true]{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 10%,var(--surface))}
+  .opt[aria-checked=true] .k{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}
+  .nav{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;margin-top:22px}
+  .nav .grp{display:flex;gap:10px;flex-wrap:wrap}
+  .pal{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+  .pal button{aspect-ratio:1;min-height:44px;border:2px solid var(--line);background:var(--surface);border-radius:8px;font-weight:700;cursor:pointer;position:relative}
+  .pal button.ans{background:var(--primary);color:var(--primary-ink);border-color:var(--primary)}
+  .pal button.fl::after{content:"";position:absolute;top:-2px;right:-2px;width:14px;height:14px;background:var(--flag);border-radius:0 6px 0 8px}
+  .pal button.cur{outline:3px solid var(--ring);outline-offset:2px}
+  .legend{display:grid;gap:4px;margin:14px 0 0;font-size:.88rem;color:var(--muted)}
+  .legend i{display:inline-block;width:14px;height:14px;border-radius:4px;border:2px solid var(--line);vertical-align:-2px;margin-right:8px}
+  .legend i.a{background:var(--primary);border-color:var(--primary)}
+  .legend i.f{background:var(--flag);border-color:var(--flag)}
+  dialog{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);max-width:440px;width:calc(100% - 32px);padding:22px}
+  dialog::backdrop{background:rgba(10,16,32,.6)}
+  @media(max-width:820px){ .layout{grid-template-columns:1fr} .pal{grid-template-columns:repeat(6,1fr)} .timer{font-size:1.2rem;min-width:96px} }
+  .kicked{max-width:520px;margin:80px auto;text-align:center}
+</style>
+</head>
+<body>
+
+<div id="examShell">
+  <header class="exam-top">
+    <div class="wrap">
+      <div class="who"><strong id="hTitle">Exam</strong><span id="hCand"></span></div>
+      <div class="timer" id="timer" role="timer">--:--</div>
+    </div>
+  </header>
+
+  <main class="wrap layout" style="margin-top:16px">
+    <section class="panel">
+      <div class="qmeta"><span id="qNo"></span><span id="qSub"></span></div>
+      <p class="stem" id="stem">Loading…</p>
+      <div class="opts" id="opts" role="radiogroup"></div>
+      <div class="nav">
+        <div class="grp">
+          <button class="btn" id="prev" type="button">Previous</button>
+          <button class="btn" id="next" type="button">Next</button>
+        </div>
+        <div class="grp">
+          <button class="btn" id="clear" type="button">Clear answer</button>
+          <button class="btn flag" id="flag" type="button">Flag for review</button>
+          <button class="btn primary" id="submit" type="button">Submit exam</button>
+        </div>
+      </div>
+      <p class="qmeta" style="margin:16px 0 0">Keys: A to E choose an answer · ← → move · F flags a question.</p>
+    </section>
+
+    <aside class="panel">
+      <h2>Questions</h2>
+      <div class="pal" id="pal"></div>
+      <div class="legend">
+        <span><i class="a"></i>Answered</span>
+        <span><i></i>Not answered</span>
+        <span><i class="f"></i>Flagged for review</span>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div id="kicked" hidden class="kicked">
+  <h2>Session ended</h2>
+  <p id="kickedReason">You left the exam window.</p>
+  <p class="muted">Please log in again to continue. Your answers are not saved after a forced logout.</p>
+  <a href="/login.html" class="btn primary" style="text-decoration:none;display:inline-block;margin-top:12px">Log in again</a>
+</div>
+
+<dialog id="dlg">
+  <h2>Submit exam?</h2>
+  <div id="dlgBody"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:16px">
+    <button class="btn" id="dlgNo" type="button">Keep working</button>
+    <button class="btn danger" id="dlgYes" type="button">Submit now</button>
+  </div>
+</dialog>
+
+<script src="/js/api.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const LETTERS = ["A","B","C","D","E"];
+
+const examId = Number(new URLSearchParams(location.search).get("id"));
+if (!examId) { alert("Missing exam id"); location.href = "/student/dashboard.html"; }
+
+let state = {
+  attempt: null,
+  exam: null,
+  questions: [],
+  ans: {},     // questionId -> display letter
+  flags: {},
+  idx: 0,
+  endsAt: 0,
+  tick: null,
+  submitted: false,
+  kicked: false
+};
+
+/* ---------------- forced logout on focus loss ---------------- */
+
+async function forceLogout(reason) {
+  if (state.kicked || state.submitted) return;
+  state.kicked = true;
+  try { await fetch("/api/logout", { method: "POST", credentials: "same-origin" }); } catch {}
+  document.getElementById("examShell").hidden = true;
+  document.getElementById("kickedReason").textContent = reason || "You left the exam window.";
+  document.getElementById("kicked").hidden = false;
+  if (state.tick) clearInterval(state.tick);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    forceLogout("You left the exam tab.");
+  }
+});
+
+window.addEventListener("blur", () => {
+  forceLogout("You left the exam window.");
+});
+
+/* ---------------- boot ---------------- */
+
+async function boot() {
+  try {
+    const data = await API.post(`/api/attempts/start/${examId}`, {});
+    state.attempt = data.attempt;
+    state.exam = data.exam;
+    state.questions = data.questions;
+    state.endsAt = Date.now() + (data.attempt.seconds_left * 1000);
+
+    $("#hTitle").textContent = state.exam.title;
+    $("#qSub").textContent = "Attempt #" + state.attempt.id;
+
+    buildPalette();
+    render();
+    state.tick = setInterval(onTick, 500);
+    onTick();
+  } catch (e) {
+    alert(e.message);
+    location.href = "/student/dashboard.html";
+  }
+}
+
+function onTick() {
+  const left = state.endsAt - Date.now();
+  const t = $("#timer");
+  t.textContent = fmt(left);
+  t.className = "timer" + (left <= 60000 ? " crit" : left <= 300000 ? " low" : "");
+  if (left <= 0) submit(true);
+}
+
+function fmt(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return String(m).padStart(2, "0") + ":" + String(r).padStart(2, "0");
+}
+
+/* ---------------- rendering ---------------- */
+
+function buildPalette() {
+  const p = $("#pal");
+  p.innerHTML = "";
+  state.questions.forEach((_, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = String(i + 1);
+    b.onclick = () => { state.idx = i; render(); };
+    p.appendChild(b);
+  });
+}
+
+function render() {
+  const q = state.questions[state.idx];
+  $("#qNo").textContent = `Question ${state.idx + 1} of ${state.questions.length}`;
+  $("#stem").textContent = q.question;
+  const box = $("#opts"); box.innerHTML = "";
+  q.options.forEach(o => {
+    const chosen = state.ans[q.id] === o.letter;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "opt";
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", chosen ? "true" : "false");
+    b.innerHTML = `<span class="k">${o.letter}</span><span>${escapeHtml(o.text)}</span>`;
+    b.onclick = () => { state.ans[q.id] = o.letter; render(); };
+    box.appendChild(b);
+  });
+
+  $("#prev").disabled = state.idx === 0;
+  $("#next").disabled = state.idx === state.questions.length - 1;
+  $("#clear").disabled = state.ans[q.id] == null;
+  const fl = !!state.flags[q.id];
+  const fb = $("#flag");
+  fb.classList.toggle("on", fl);
+  fb.textContent = fl ? "Remove flag" : "Flag for review";
+
+  // palette
+  const btns = $("#pal").children;
+  for (let i = 0; i < btns.length; i++) {
+    const qi = state.questions[i].id;
+    const answered = state.ans[qi] != null;
+    const flagged = !!state.flags[qi];
+    btns[i].className = (answered ? "ans " : "") + (flagged ? "fl " : "") + (i === state.idx ? "cur" : "");
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+/* ---------------- submit ---------------- */
+
+function askSubmit() {
+  const un = state.questions.filter(q => state.ans[q.id] == null).length;
+  const body = $("#dlgBody");
+  body.innerHTML = `<p>You cannot change your answers after you submit.</p>
+    <ul><li>${state.questions.length - un} of ${state.questions.length} answered</li>
+    ${un ? `<li>${un} not answered</li>` : ""}</ul>`;
+  $("#dlg").showModal();
+}
+
+async function submit(auto) {
+  if (state.submitted) return;
+  state.submitted = true;
+  clearInterval(state.tick);
+
+  // Build answers payload: { <questionId>: "<display letter>" }
+  const answers = {};
+  for (const q of state.questions) {
+    if (state.ans[q.id]) answers[q.id] = state.ans[q.id];
+  }
+
+  try {
+    await API.post(`/api/attempts/${state.attempt.id}/submit`, { answers });
+  } catch (e) {
+    // Even on error, show the thank-you page — the server may have already recorded it.
+    console.error(e);
+  }
+
+  document.getElementById("examShell").hidden = true;
+  document.getElementById("kickedReason").textContent = auto
+    ? "Time ran out. Your answers have been submitted."
+    : "Submitted — thank you. Your result will be published later.";
+  document.getElementById("kicked").hidden = false;
+  document.querySelector("#kicked .btn.primary").textContent = "Back to dashboard";
+  document.querySelector("#kicked .btn.primary").href = "/student/dashboard.html";
+}
+
+/* ---------------- events ---------------- */
+
+$("#prev").onclick = () => { if (state.idx > 0) { state.idx--; render(); } };
+$("#next").onclick = () => { if (state.idx < state.questions.length - 1) { state.idx++; render(); } };
+$("#clear").onclick = () => { delete state.ans[state.questions[state.idx].id]; render(); };
+$("#flag").onclick = () => {
+  const id = state.questions[state.idx].id;
+  if (state.flags[id]) delete state.flags[id]; else state.flags[id] = true;
+  render();
+};
+$("#submit").onclick = askSubmit;
+$("#dlgNo").onclick = () => $("#dlg").close();
+$("#dlgYes").onclick = () => { $("#dlg").close(); submit(false); };
+
+document.addEventListener("keydown", (e) => {
+  if (state.submitted || state.kicked) return;
+  if ($("#dlg").open) return;
+  const t = e.target && e.target.tagName;
+  if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  const i = LETTERS.map(x => x.toLowerCase()).indexOf(k);
+  if (i >= 0) {
+    const q = state.questions[state.idx];
+    const opt = q.options[i];
+    if (opt) { state.ans[q.id] = opt.letter; render(); }
+  } else if (k === "arrowright" && state.idx < state.questions.length - 1) { state.idx++; render(); }
+  else if (k === "arrowleft" && state.idx > 0) { state.idx--; render(); }
+  else if (k === "f") { $("#flag").click(); }
+});
+
+boot();
+</script>
+</body>
+</html>

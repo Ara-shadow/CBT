@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login — CBT School System</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<main class="login-wrap">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="dot" id="brandDot">S</div>
+      <strong id="brandName">Sign in</strong>
+    </div>
+
+    <h1>Sign in</h1>
+    <p class="lede">Enter your credentials to continue.</p>
+
+    <form id="loginForm">
+      <label class="f" style="margin-bottom:12px">Username
+        <input type="text" id="username" autocomplete="username" required autofocus>
+      </label>
+      <label class="f" style="margin-bottom:16px">Password
+        <input type="password" id="password" autocomplete="current-password" required>
+      </label>
+      <button class="btn primary" type="submit" id="submitBtn" style="width:100%">Sign in</button>
+    </form>
+
+    <div id="msg" class="msg" hidden></div>
+  </div>
+</main>
+
+<script src="/js/api.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+
+// Try to fetch the school name for the brand — no session needed since this is a public read.
+(async () => {
+  try {
+    const r = await fetch("/api/public/settings", { credentials: "same-origin" });
+    if (!r.ok) return;
+    const { settings } = await r.json();
+    if (settings && settings.school_name) {
+      $("#brandName").textContent = settings.school_name;
+      $("#brandDot").textContent = settings.school_name.charAt(0).toUpperCase();
+    }
+  } catch {}
+})();
+
+const form = $("#loginForm");
+const msg = $("#msg");
+const btn = $("#submitBtn");
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  msg.hidden = true;
+  btn.disabled = true;
+  btn.textContent = "Signing in…";
+  try {
+    const username = $("#username").value.trim();
+    const password = $("#password").value;
+    const res = await API.post("/api/login", { username, password });
+    window.location.href = res.redirect;
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "msg err";
+    msg.hidden = false;
+    btn.disabled = false;
+    btn.textContent = "Sign in";
+  }
+});
+</script>
+</body>
+</html>

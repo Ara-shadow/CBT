@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report card</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .report{max-width:880px;margin:24px auto;padding:28px 32px;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+  .head{text-align:center;border-bottom:2px solid var(--primary);padding-bottom:14px;margin-bottom:16px}
+  .head h1{margin:0;font-size:1.6rem;color:var(--primary);letter-spacing:.02em}
+  .head .meta{color:var(--muted);margin-top:4px}
+  .head .title{font-weight:700;margin-top:8px;font-size:1rem}
+  .idline{display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;font-size:.95rem}
+  table.rep{width:100%;border-collapse:collapse;margin:8px 0 16px}
+  table.rep th,table.rep td{border:1px solid var(--line);padding:6px 8px;font-size:.92rem}
+  table.rep th{background:var(--bg)}
+  .stats{display:flex;gap:26px;flex-wrap:wrap;margin:12px 0;font-size:.95rem}
+  .stats strong{color:var(--ink)}
+  .att{border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:12px 0;font-size:.92rem}
+  .att h4{margin:0 0 6px;font-size:.9rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .comments{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+  .comment-box{border:1px solid var(--line);border-radius:8px;padding:12px;min-height:110px}
+  .comment-box h4{margin:0 0 8px;font-size:.9rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .comment-box .body{white-space:pre-wrap;min-height:52px}
+  .sig{margin-top:12px;border-top:1px solid var(--line);padding-top:8px;color:var(--muted);font-size:.85rem}
+  @media print { .report{border:0;max-width:100%;padding:0} .noprint{display:none} }
+  @media(max-width:700px){ .comments{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<main class="wrap" id="main">
+  <div class="noprint" style="display:flex;gap:8px;justify-content:flex-end;margin:12px 0">
+    <button class="btn" id="backBtn">Back</button>
+    <button class="btn primary" id="printBtn">Print</button>
+  </div>
+  <div id="render"></div>
+</main>
+
+<script src="/js/api.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const qs = new URLSearchParams(location.search);
+const studentId = qs.get("student_id");
+const sessionId = qs.get("session_id");
+const term      = qs.get("term");
+const type      = qs.get("type");
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function load() {
+  if (!studentId || !sessionId || !term || !type) {
+    $("#render").innerHTML = "<p>Missing parameters.</p>"; return;
+  }
+  try {
+    // We re-use the results endpoint, and read the card to know the comments/publish status.
+    const [data, cm] = await Promise.all([
+      API.get(`/api/results/student/${studentId}?session_id=${sessionId}&term=${term}&type=${type}`),
+      API.get(`/api/results/comments?class_id=${data ? "" : ""}&session_id=${sessionId}&term=${term}&type=${type}`).catch(() => ({ cards: [] }))
+    ]);
+    render(data, null);
+  } catch (e) {
+    $("#render").innerHTML = `<p class="muted">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+function render(d, card) {
+  const rows = d.subjects.map(s => d.type === "midterm"
+    ? `<tr><td>${escapeHtml(s.subject_name)}</td><td>${s.ca1}</td><td>${s.ca2}</td><td>${s.project}</td>
+        <td><strong>${s.midterm_total}</strong></td><td>${escapeHtml(s.grade)}</td><td>${escapeHtml(s.remark)}</td></tr>`
+    : `<tr><td>${escapeHtml(s.subject_name)}</td><td>${s.midterm_total}</td><td>${s.cbt_score}</td><td>${s.pbt_score}</td>
+        <td>${s.exam_score}</td><td><strong>${s.term_total}</strong></td><td>${escapeHtml(s.grade)}</td><td>${escapeHtml(s.remark)}</td></tr>`
+  ).join("");
+  const header = d.type === "midterm"
+    ? `<tr><th>Subject</th><th>CA1</th><th>CA2</th><th>Proj</th><th>Midterm /40</th><th>Grade</th><th>Remark</th></tr>`
+    : `<tr><th>Subject</th><th>Midterm /40</th><th>CBT /30</th><th>PBT /30</th><th>Exam /60</th><th>Total /100</th><th>Grade</th><th>Remark</th></tr>`;
+
+  const typeLabel = d.type === "midterm" ? "Midterm report" : "End-of-term report";
+  const s = d.school || {};
+  const headLabel = card && card.head_label_used ? card.head_label_used
+    : (s.head_title || (s.school_level === "primary" ? "Head Teacher" : "Principal"));
+  const att = d.attendance;
+
+  $("#render").innerHTML = `
+    <div class="report">
+      <div class="head">
+        <h1>${escapeHtml(s.school_name || "School")}</h1>
+        <div class="meta">${escapeHtml(s.address || "")}</div>
+        <div class="title">${escapeHtml(typeLabel)} — ${escapeHtml(d.session.name)} ${escapeHtml(d.session.term)} Term</div>
+      </div>
+      <div class="idline">
+        <div><strong>Student:</strong> ${escapeHtml(d.student.full_name)}</div>
+        <div><strong>Admission No:</strong> ${escapeHtml(d.student.admission_no)}</div>
+        ${d.student.gender ? `<div><strong>Gender:</strong> ${escapeHtml(d.student.gender)}</div>` : ""}
+      </div>
+      <table class="rep"><thead>${header}</thead><tbody>${rows}</tbody></table>
+      <div class="stats">
+        <div>Percentage: <strong>${d.summary.percentage}%</strong></div>
+        <div>Class average: <strong>${d.class_average}%</strong></div>
+        <div>Class highest: <strong>${d.class_highest}%</strong></div>
+      </div>
+      <div class="att">
+        <h4>Attendance</h4>
+        School opened: <strong>${att.days_school_opened}</strong> · School closed: <strong>${att.days_school_closed}</strong> ·
+        Present: <strong>${att.days_present}</strong> · Absent: <strong>${att.days_absent}</strong>
+      </div>
+      <div class="comments">
+        <div class="comment-box"><h4>Teacher's comment</h4><div class="body">${card && card.teacher_comment ? escapeHtml(card.teacher_comment) : `<em class="muted">Not yet entered.</em>`}</div><div class="sig">Signature / Date: ____________________</div></div>
+        <div class="comment-box"><h4>${escapeHtml(headLabel)}'s comment</h4><div class="body">${card && card.head_comment ? escapeHtml(card.head_comment) : `<em class="muted">Not yet entered.</em>`}</div><div class="sig">Signature / Date: ____________________</div></div>
+      </div>
+    </div>`;
+}
+
+$("#printBtn").onclick = () => window.print();
+$("#backBtn").onclick = () => history.back();
+load();
+</script>
+</body>
+</html>

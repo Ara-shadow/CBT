@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teacher — CBT School System</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:16px 18px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:4px}
+  .stat .label{color:var(--muted);font-size:.82rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+  .stat .value{font-size:2rem;font-weight:800;letter-spacing:-.02em;line-height:1.1}
+  .stat .sub{color:var(--muted);font-size:.86rem}
+  .quick{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  .quick a{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;color:var(--ink);text-decoration:none;font-weight:700;transition:border-color .15s,background .15s}
+  .quick a:hover{border-color:var(--primary);background:var(--primary-soft);text-decoration:none}
+  .quick .ico{width:36px;height:36px;border-radius:10px;flex:0 0 auto;display:grid;place-items:center;background:var(--bg-soft);color:var(--primary);font-weight:800}
+  .quick .txt{display:flex;flex-direction:column;gap:2px}
+  .quick small{font-weight:500;color:var(--muted);font-size:.82rem}
+  .section-title{margin:22px 0 10px}
+  .section-title h2{margin:0}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1 style="margin:0">Welcome back</h1>
+    <p class="lede" style="margin:4px 0 18px">Here's what's on your plate today.</p>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="section-title"><h2>Quick actions</h2></div>
+    <div class="quick">
+      <a href="/teacher/questions.html">
+        <div class="ico">Q</div>
+        <div class="txt"><span>Question bank</span><small>Create and import MCQs</small></div>
+      </a>
+      <a href="/teacher/exams.html">
+        <div class="ico">E</div>
+        <div class="txt"><span>Exams</span><small>Assemble CBTs from the bank</small></div>
+      </a>
+      <a href="/teacher/scores.html">
+        <div class="ico">S</div>
+        <div class="txt"><span>Scores</span><small>Enter CA, PBT and sync CBT</small></div>
+      </a>
+      <a href="/teacher/daily.html">
+        <div class="ico">D</div>
+        <div class="txt"><span>Daily attendance</span><small>Mark P / A per day</small></div>
+      </a>
+      <a href="/teacher/attendance.html">
+        <div class="ico">A</div>
+        <div class="txt"><span>Attendance summary</span><small>Term totals per class</small></div>
+      </a>
+      <a href="/teacher/results.html">
+        <div class="ico">R</div>
+        <div class="txt"><span>Results</span><small>Class averages and details</small></div>
+      </a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">Recent questions you've added</h2>
+    <div class="table-scroll">
+      <table class="tbl">
+        <thead><tr><th>Question</th><th>Subject</th><th>Level</th><th>Marks</th></tr></thead>
+        <tbody id="recentQs"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+
+document.getElementById("main").insertBefore(renderTeacherNav("/teacher/dashboard.html"), document.getElementById("main").firstChild);
+
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+
+async function loadStats() {
+  try {
+    const { questions } = await API.get("/api/questions");
+    const mine = questions.filter(q => q.created_by === me.id);
+    const stats = [
+      { label: "My questions",  value: mine.length,      sub: "In the bank" },
+      { label: "All questions", value: questions.length, sub: "Shared across teachers" }
+    ];
+    $("#stats").innerHTML = stats.map(x => `
+      <div class="stat">
+        <span class="label">${x.label}</span>
+        <span class="value">${x.value}</span>
+        <span class="sub">${x.sub}</span>
+      </div>`).join("");
+  } catch (e) {
+    $("#stats").innerHTML = `<div class="stat"><span class="label">Error</span><span class="sub">${escapeHtml(e.message)}</span></div>`;
+  }
+}
+
+async function loadRecent() {
+  const body = $("#recentQs");
+  try {
+    const { questions } = await API.get("/api/questions");
+    const mine = questions.filter(q => q.created_by === me.id).slice(0, 5);
+    if (!mine.length) {
+      body.innerHTML = `<tr><td colspan="4" class="muted">You haven't added any questions yet. <a href="/teacher/questions.html">Go to the question bank</a>.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const q of mine) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td style="max-width:420px">${escapeHtml(q.question.length > 90 ? q.question.slice(0,90) + "…" : q.question)}</td>
+        <td>${q.subject_name ? escapeHtml(q.subject_name) : '<span class="muted">—</span>'}</td>
+        <td>${q.class_level}</td>
+        <td>${q.marks}</td>`;
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["teacher", "admin"]);
+  if (!me) return;
+  loadStats();
+  loadRecent();
+})();
+</script>
+</body>
+</html>

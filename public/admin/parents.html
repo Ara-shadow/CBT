@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parents — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .grid-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px}
+  .grid-form label{display:flex;flex-direction:column;font-weight:700;font-size:.9rem;gap:4px}
+  .grid-form input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+  .child-list{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+  .child-pill{padding:2px 10px;border-radius:999px;background:var(--bg);border:1px solid var(--line);font-size:.85rem}
+  dialog{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);max-width:720px;width:calc(100% - 32px);padding:22px;max-height:88vh;overflow:auto}
+  dialog::backdrop{background:rgba(10,16,32,.6)}
+  .student-check{display:flex;align-items:center;gap:8px;padding:4px 0}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Parents</h1>
+    <p class="lede">Create parent accounts and link each one to one or more children.</p>
+
+    <button class="btn primary" id="openAdd">+ Add parent</button>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <table class="tbl" style="margin-top:14px">
+      <thead><tr><th>Parent</th><th>Username</th><th>Phone</th><th>Children</th><th>Actions</th></tr></thead>
+      <tbody id="body"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <h2 id="dlgTitle">Add parent</h2>
+  <form id="dlgForm">
+    <div class="grid-form">
+      <label>Full name <input type="text" id="full_name" required></label>
+      <label>Phone <input type="text" id="phone"></label>
+      <label>Email <input type="email" id="email"></label>
+      <label>Username <input type="text" id="username"><span class="muted" style="font-weight:400;font-size:.82rem">auto if blank</span></label>
+      <label>Password <input type="text" id="password" placeholder="parent123"></label>
+    </div>
+
+    <p style="margin:6px 0 4px;font-weight:700">Children</p>
+    <div id="studentList" style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">
+      Loading…
+    </div>
+
+    <div id="dlgMsg" class="msg" hidden></div>
+
+    <div class="row" style="justify-content:flex-end;margin-top:14px">
+      <button type="button" class="btn" id="dlgCancel">Cancel</button>
+      <button type="submit" class="btn primary" id="dlgSave">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let allStudents = [];
+let editingId = null;
+let selectedChildren = new Set();
+
+document.getElementById("main").insertBefore(renderAdminNav("/admin/parents.html"), document.getElementById("main").firstChild);
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadStudents() {
+  // uses the admin endpoint via students route (admin only)
+  const { students } = await API.get("/api/admin/students");
+  allStudents = students;
+}
+
+function renderStudentChecks() {
+  const box = $("#studentList");
+  if (!allStudents.length) { box.innerHTML = `<em class="muted">No students found.</em>`; return; }
+  box.innerHTML = "";
+  for (const s of allStudents) {
+    const id = "stu_" + s.id;
+    const wrap = document.createElement("label");
+    wrap.className = "student-check";
+    wrap.innerHTML = `<input type="checkbox" id="${id}" data-sid="${s.id}" ${selectedChildren.has(s.id) ? "checked" : ""}>
+      <span>${escapeHtml(s.full_name)} — ${escapeHtml(s.admission_no)}${s.class_name ? " · " + escapeHtml(s.class_name) + " " + escapeHtml(s.class_arm || "") : ""}</span>`;
+    box.appendChild(wrap);
+  }
+  box.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.onchange = () => {
+      const sid = Number(cb.dataset.sid);
+      if (cb.checked) selectedChildren.add(sid);
+      else selectedChildren.delete(sid);
+    };
+  });
+}
+
+async function load() {
+  const body = $("#body");
+  try {
+    const { parents } = await API.get("/api/admin/parents");
+    if (!parents.length) {
+      body.innerHTML = `<tr><td colspan="5" class="muted">No parent accounts yet.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const p of parents) {
+      const tr = document.createElement("tr");
+      const childrenHtml = p.children.length
+        ? p.children.map(c => `<span class="child-pill">${escapeHtml(c.student_name)}</span>`).join(" ")
+        : `<span class="muted">—</span>`;
+      tr.innerHTML = `
+        <td>${escapeHtml(p.full_name)}</td>
+        <td>${escapeHtml(p.username || "")}</td>
+        <td>${escapeHtml(p.phone || "")}</td>
+        <td><div class="child-list">${childrenHtml}</div></td>
+        <td></td>`;
+      const td = tr.lastElementChild;
+
+      const edit = document.createElement("button");
+      edit.className = "btn"; edit.textContent = "Edit";
+      edit.onclick = () => openEdit(p);
+      td.appendChild(edit);
+
+      const reset = document.createElement("button");
+      reset.className = "btn"; reset.style.marginLeft = "6px";
+      reset.textContent = "Reset password";
+      reset.onclick = async () => {
+        const pass = prompt("New password (min 4 chars):", "parent123");
+        if (!pass) return;
+        try { const r = await API.post(`/api/admin/parents/${p.id}/reset-password`, { password: pass }); alert("Password: " + r.password); }
+        catch (e) { alert(e.message); }
+      };
+      td.appendChild(reset);
+
+      const del = document.createElement("button");
+      del.className = "btn danger"; del.style.marginLeft = "6px";
+      del.textContent = "Delete";
+      del.onclick = async () => {
+        if (!confirm(`Delete parent ${p.full_name}? This removes their login.`)) return;
+        try { await API.del(`/api/admin/parents/${p.id}`); load(); }
+        catch (e) { alert(e.message); }
+      };
+      td.appendChild(del);
+
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+function clearForm() {
+  editingId = null; selectedChildren = new Set();
+  ["full_name","phone","email","username","password"].forEach(id => $("#"+id).value = "");
+  $("#dlgTitle").textContent = "Add parent";
+  $("#dlgSave").textContent = "Save";
+  $("#dlgMsg").hidden = true;
+}
+
+function openAdd() {
+  clearForm();
+  renderStudentChecks();
+  $("#dlg").showModal();
+}
+
+async function openEdit(p) {
+  clearForm();
+  editingId = p.id;
+  $("#full_name").value = p.full_name;
+  $("#phone").value = p.phone || "";
+  $("#email").value = p.email || "";
+  $("#username").value = p.username || ""; $("#username").disabled = true;
+  selectedChildren = new Set((p.children || []).map(c => c.student_id));
+  renderStudentChecks();
+  $("#dlgTitle").textContent = "Edit parent";
+  $("#dlgSave").textContent = "Update";
+  $("#dlg").showModal();
+}
+
+$("#dlgForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#dlgMsg"); msg.hidden = true;
+  const payload = {
+    full_name: $("#full_name").value.trim(),
+    phone: $("#phone").value.trim() || null,
+    email: $("#email").value.trim() || null,
+    student_ids: Array.from(selectedChildren)
+  };
+  try {
+    if (editingId) {
+      await API.put(`/api/admin/parents/${editingId}`, payload);
+    } else {
+      payload.username = $("#username").value.trim() || undefined;
+      payload.password = $("#password").value.trim() || undefined;
+      const r = await API.post("/api/admin/parents", payload);
+      msg.textContent = `Parent added. Login: ${r.username} / ${r.password}`;
+      msg.className = "msg ok"; msg.hidden = false;
+      setTimeout(() => { $("#dlg").close(); load(); }, 1400);
+      return;
+    }
+    $("#dlg").close();
+    load();
+  } catch (err) {
+    msg.textContent = err.message; msg.className = "msg err"; msg.hidden = false;
+  }
+});
+
+$("#dlgCancel").onclick = () => $("#dlg").close();
+$("#openAdd").onclick = openAdd;
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["admin"]);
+  if (!me) return;
+  await loadStudents();
+  load();
+})();
+</script>
+</body>
+</html>

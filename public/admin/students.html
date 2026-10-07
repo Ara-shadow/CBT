@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Students — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  /* small tweak for the form grid */
+  .grid-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px}
+  .grid-form label{display:flex;flex-direction:column;font-weight:700;font-size:.9rem;gap:4px}
+  .grid-form input,.grid-form select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);width:100%}
+  dialog{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);max-width:620px;width:calc(100% - 32px);padding:20px}
+  dialog::backdrop{background:rgba(10,16,32,.6)}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Students</h1>
+    <p class="lede">Add students, assign them to a class, and the system creates their login.</p>
+
+    <div class="row" style="margin-bottom:12px">
+      <select id="filterClass"><option value="">All classes</option></select>
+      <input type="text" id="search" placeholder="Search name or admission no" style="min-width:220px">
+      <button class="btn primary" id="openAdd">+ Add student</button>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Admission No</th><th>Full name</th><th>Class</th><th>Gender</th>
+          <th>Login</th><th>Status</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="body"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<!-- add / edit dialog -->
+<dialog id="dlg">
+  <h2 id="dlgTitle">Add student</h2>
+  <form id="dlgForm">
+    <div class="grid-form">
+      <label>Admission No <input type="text" id="admission_no" required></label>
+      <label>Full name <input type="text" id="full_name" required></label>
+      <label>Gender
+        <select id="gender"><option value="">—</option><option value="M">M</option><option value="F">F</option></select>
+      </label>
+      <label>Date of birth <input type="date" id="date_of_birth"></label>
+      <label>Class <select id="class_id"><option value="">—</option></select></label>
+      <label>Guardian name <input type="text" id="guardian_name"></label>
+      <label>Guardian phone <input type="text" id="guardian_phone"></label>
+      <label>Guardian email <input type="email" id="guardian_email"></label>
+      <label>Guardian address <input type="text" id="guardian_address"></label>
+      <label>Login username <input type="text" id="username"><span class="muted" style="font-weight:400">auto if blank</span></label>
+      <label>Password <input type="text" id="password" placeholder="student123"><span class="muted" style="font-weight:400">min 4 chars</span></label>
+    </div>
+    <div id="dlgMsg" class="msg" hidden></div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px">
+      <button type="button" class="btn" id="dlgCancel">Cancel</button>
+      <button type="submit" class="btn primary" id="dlgSave">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+loadUserHeader("#hdr");
+document.getElementById("main").insertBefore(renderAdminNav("/admin/students.html"), document.getElementById("main").firstChild);
+
+let classes = [];
+let editingId = null;
+
+async function loadClasses() {
+  try {
+    const { classes: list } = await API.get("/api/admin/academic/classes");
+    classes = list;
+    const fill = (sel, includeAll) => {
+      sel.innerHTML = includeAll ? `<option value="">All classes</option>` : `<option value="">—</option>`;
+      for (const c of classes) {
+        const o = document.createElement("option");
+        o.value = c.id;
+        o.textContent = `${c.name} ${c.arm || ""}`.trim();
+        sel.appendChild(o);
+      }
+    };
+    fill($("#filterClass"), true);
+    fill($("#class_id"), false);
+  } catch (e) { /* silent */ }
+}
+
+async function load() {
+  const body = $("#body");
+  try {
+    const params = new URLSearchParams();
+    if ($("#filterClass").value) params.set("class_id", $("#filterClass").value);
+    if ($("#search").value.trim()) params.set("q", $("#search").value.trim());
+    const { students } = await API.get("/api/admin/students?" + params.toString());
+    if (!students.length) {
+      body.innerHTML = `<tr><td colspan="7" class="muted">No students yet.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const s of students) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${s.admission_no}</td>
+        <td>${s.full_name}</td>
+        <td>${s.class_name ? s.class_name + " " + (s.class_arm || "") : '<span class="muted">—</span>'}</td>
+        <td>${s.gender || ""}</td>
+        <td>${s.login_username || '<span class="muted">—</span>'}</td>
+        <td><span class="pill ${s.status === "active" ? "ok" : "bad"}">${s.status}</span></td>
+        <td></td>`;
+      const td = tr.lastElementChild;
+      const edit = document.createElement("button");
+      edit.className = "btn";
+      edit.textContent = "Edit";
+      edit.onclick = () => openEdit(s);
+      const reset = document.createElement("button");
+      reset.className = "btn";
+      reset.style.marginLeft = "6px";
+      reset.textContent = "Reset password";
+      reset.onclick = async () => {
+        const p = prompt("New password (min 4 chars):", "student123");
+        if (!p) return;
+        try {
+          const r = await API.post(`/api/admin/students/${s.id}/reset-password`, { password: p });
+          alert(`Password reset to: ${r.password}`);
+        } catch (e) { alert(e.message); }
+      };
+      const del = document.createElement("button");
+      del.className = "btn danger";
+      del.style.marginLeft = "6px";
+      del.textContent = "Delete";
+      del.onclick = async () => {
+        if (!confirm(`Delete ${s.full_name}? This also removes their login.`)) return;
+        try { await API.del(`/api/admin/students/${s.id}`); load(); }
+        catch (e) { alert(e.message); }
+      };
+      td.append(edit, reset, del);
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="7" class="muted">${e.message}</td></tr>`;
+  }
+}
+
+function clearForm() {
+  editingId = null;
+  ["admission_no","full_name","date_of_birth","guardian_name","guardian_phone",
+   "guardian_email","guardian_address","username","password"].forEach(id => $("#"+id).value = "");
+  $("#gender").value = ""; $("#class_id").value = "";
+  $("#dlgMsg").hidden = true;
+  $("#dlgTitle").textContent = "Add student";
+  $("#dlgSave").textContent = "Save";
+  $("#username").disabled = false;
+  $("#admission_no").disabled = false;
+}
+
+function openAdd() { clearForm(); $("#dlg").showModal(); }
+
+function openEdit(s) {
+  clearForm();
+  editingId = s.id;
+  $("#admission_no").value = s.admission_no; $("#admission_no").disabled = true;
+  $("#full_name").value = s.full_name;
+  $("#gender").value = s.gender || "";
+  $("#date_of_birth").value = s.date_of_birth || "";
+  $("#guardian_name").value = s.guardian_name || "";
+  $("#guardian_phone").value = s.guardian_phone || "";
+  $("#guardian_email").value = s.guardian_email || "";
+  $("#guardian_address").value = s.guardian_address || "";
+  $("#class_id").value = s.class_id || "";
+  $("#username").value = s.login_username || ""; $("#username").disabled = true;
+  $("#password").value = "";
+  $("#dlgTitle").textContent = "Edit student";
+  $("#dlgSave").textContent = "Update";
+  $("#dlg").showModal();
+}
+
+// auto-suggest username as the admin types a name
+$("#full_name").addEventListener("blur", async () => {
+  if (editingId) return;
+  if ($("#username").value.trim()) return;
+  const name = $("#full_name").value.trim();
+  if (!name) return;
+  try {
+    const { username } = await API.get("/api/admin/students/suggest-username?name=" + encodeURIComponent(name));
+    $("#username").value = username;
+  } catch {}
+});
+
+$("#dlgForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#dlgMsg"); msg.hidden = true;
+  const payload = {
+    admission_no: $("#admission_no").value.trim(),
+    full_name: $("#full_name").value.trim(),
+    gender: $("#gender").value || null,
+    date_of_birth: $("#date_of_birth").value || null,
+    guardian_name: $("#guardian_name").value.trim() || null,
+    guardian_phone: $("#guardian_phone").value.trim() || null,
+    guardian_email: $("#guardian_email").value.trim() || null,
+    guardian_address: $("#guardian_address").value.trim() || null,
+    class_id: $("#class_id").value ? Number($("#class_id").value) : null
+  };
+  try {
+    if (editingId) {
+      await API.put(`/api/admin/students/${editingId}`, payload);
+    } else {
+      payload.username = $("#username").value.trim() || undefined;
+      payload.password = $("#password").value.trim() || undefined;
+      const r = await API.post("/api/admin/students", payload);
+      msg.textContent = `Student added. Login: ${r.username} / ${r.password}`;
+      msg.className = "msg ok";
+      msg.hidden = false;
+      setTimeout(() => { $("#dlg").close(); load(); }, 1200);
+      return;
+    }
+    $("#dlg").close();
+    load();
+  } catch (err) {
+    msg.textContent = err.message; msg.className = "msg err"; msg.hidden = false;
+  }
+});
+
+$("#dlgCancel").onclick = () => $("#dlg").close();
+$("#openAdd").onclick = openAdd;
+$("#filterClass").onchange = load;
+$("#search").addEventListener("input", () => { clearTimeout(window._t); window._t = setTimeout(load, 250); });
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+loadClasses().then(load);
+</script>
+</body>
+</html>

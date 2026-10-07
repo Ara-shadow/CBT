@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — CBT School System</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:16px 18px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:4px}
+  .stat .label{color:var(--muted);font-size:.82rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+  .stat .value{font-size:2rem;font-weight:800;letter-spacing:-.02em;line-height:1.1}
+  .stat .sub{color:var(--muted);font-size:.86rem}
+  .quick{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:8px}
+  .quick a{
+    display:flex;align-items:center;gap:12px;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px 16px;color:var(--ink);text-decoration:none;font-weight:700;
+    transition:border-color .15s, background .15s, transform .05s;
+  }
+  .quick a:hover{border-color:var(--primary);background:var(--primary-soft);text-decoration:none}
+  .quick a:active{transform:translateY(1px)}
+  .quick .ico{
+    width:36px;height:36px;border-radius:10px;flex:0 0 auto;
+    display:grid;place-items:center;background:var(--bg-soft);color:var(--primary);font-weight:800;font-size:1rem
+  }
+  .quick .txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .quick .txt small{font-weight:500;color:var(--muted);font-size:.82rem}
+  .section-title{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:22px 0 10px}
+  .section-title h2{margin:0}
+  .section-title a{font-weight:700;font-size:.9rem}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <div class="spread" style="margin-bottom:6px">
+      <div>
+        <h1 style="margin:0">Welcome back</h1>
+        <p class="lede" style="margin:4px 0 0">Here's the state of your school at a glance.</p>
+      </div>
+      <span class="pill ok" id="sessionPill">—</span>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="section-title">
+      <h2>Quick actions</h2>
+    </div>
+    <div class="quick">
+      <a href="/admin/students.html">
+        <div class="ico">S</div>
+        <div class="txt"><span>Students</span><small>Add, edit, filter the register</small></div>
+      </a>
+      <a href="/admin/parents.html">
+        <div class="ico">P</div>
+        <div class="txt"><span>Parents</span><small>Create logins, link children</small></div>
+      </a>
+      <a href="/admin/exams.html">
+        <div class="ico">E</div>
+        <div class="txt"><span>Exams</span><small>Publish and unpublish CBTs</small></div>
+      </a>
+      <a href="/admin/results.html">
+        <div class="ico">R</div>
+        <div class="txt"><span>Results</span><small>View midterm and term results</small></div>
+      </a>
+      <a href="/admin/publish.html">
+        <div class="ico">✱</div>
+        <div class="txt"><span>Publish</span><small>Freeze reports, add comments</small></div>
+      </a>
+      <a href="/admin/report-links.html">
+        <div class="ico">🔗</div>
+        <div class="txt"><span>Report links</span><small>Send private links to parents</small></div>
+      </a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="spread">
+      <h2 style="margin:0">Users</h2>
+      <button class="btn small" id="openCreateUser">+ Create user</button>
+    </div>
+    <div class="table-scroll">
+      <table class="tbl">
+        <thead>
+          <tr><th>Username</th><th>Full name</th><th>Role</th><th>Status</th><th>Action</th></tr>
+        </thead>
+        <tbody id="usersBody"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0">School setup</h2>
+    <p class="lede">A quick reference for what's configured.</p>
+    <div class="table-scroll">
+      <table class="tbl">
+        <tbody id="setupBody"><tr><td class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<dialog id="userDlg">
+  <h2>Create user</h2>
+  <form id="userForm" class="grid2" style="display:grid;gap:12px">
+    <label class="f">Username <input type="text" id="newUsername" required></label>
+    <label class="f">Full name <input type="text" id="newFullName" required></label>
+    <label class="f">Password <input type="password" id="newPassword" required></label>
+    <label class="f">Role
+      <select id="newRole">
+        <option value="teacher">Teacher</option>
+        <option value="admin">Admin</option>
+      </select>
+    </label>
+    <div class="grid2" style="grid-column:1/-1;gap:10px;justify-content:flex-end;display:flex">
+      <button type="button" class="btn" id="userCancel">Cancel</button>
+      <button type="submit" class="btn primary">Create user</button>
+    </div>
+    <div id="userMsg" class="msg" hidden style="grid-column:1/-1"></div>
+  </form>
+</dialog>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+
+document.getElementById("main").insertBefore(renderAdminNav("/admin/dashboard.html"), document.getElementById("main").firstChild);
+
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+
+async function loadSummary() {
+  try {
+    const st = await API.get("/api/status");
+    const c = st.counts || {};
+    const s = st.currentSession;
+    const pill = $("#sessionPill");
+    if (s) { pill.textContent = `${s.name} · ${s.term} Term`; pill.className = "pill ok"; }
+    else   { pill.textContent = "No current session"; pill.className = "pill bad"; }
+
+    const stats = [
+      { label: "Users",     value: c.users,     sub: "Staff and students with logins" },
+      { label: "Students",  value: c.students,  sub: "Active in the register" },
+      { label: "Classes",   value: c.classes,   sub: "Across all levels" },
+      { label: "Subjects",  value: c.subjects,  sub: "Configured" },
+      { label: "Questions", value: c.questions, sub: "In the question bank" }
+    ];
+    $("#stats").innerHTML = stats.map(x => `
+      <div class="stat">
+        <span class="label">${x.label}</span>
+        <span class="value">${x.value ?? 0}</span>
+        <span class="sub">${x.sub}</span>
+      </div>`).join("");
+  } catch (e) {
+    $("#stats").innerHTML = `<div class="stat"><span class="label">Error</span><span class="sub">${escapeHtml(e.message)}</span></div>`;
+  }
+}
+
+async function loadUsers() {
+  const body = $("#usersBody");
+  try {
+    const { users } = await API.get("/api/admin/users");
+    if (!users.length) { body.innerHTML = `<tr><td colspan="5" class="muted">No users yet.</td></tr>`; return; }
+    body.innerHTML = "";
+    for (const u of users) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${escapeHtml(u.username)}</td>
+        <td>${escapeHtml(u.full_name)}</td>
+        <td>${u.role}</td>
+        <td><span class="pill ${u.is_active ? "ok" : "bad"}">${u.is_active ? "Active" : "Inactive"}</span></td>
+        <td></td>`;
+      const td = tr.lastElementChild;
+      const btn = document.createElement("button");
+      btn.className = "btn small";
+      btn.textContent = u.is_active ? "Deactivate" : "Activate";
+      btn.onclick = async () => {
+        try {
+          if (u.is_active) await API.post(`/api/admin/users/${u.id}/deactivate`, {});
+          else             await API.post(`/api/admin/users/${u.id}/activate`, {});
+          loadUsers();
+        } catch (e) { alert(e.message); }
+      };
+      td.appendChild(btn);
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function loadSetup() {
+  const body = $("#setupBody");
+  try {
+    const [sessions, classes, subjects] = await Promise.all([
+      API.get("/api/teacher/sessions").catch(() => ({ sessions: [] })),
+      API.get("/api/teacher/classes").catch(() => ({ classes: [] })),
+      API.get("/api/subjects").catch(() => ({ subjects: [] }))
+    ]);
+    const cur = sessions.sessions.find(s => s.is_current);
+    body.innerHTML = `
+      <tr><th style="width:200px">Current session</th><td>${cur ? escapeHtml(cur.name + " · " + cur.term + " Term") : '<span class="muted">None set</span>'}</td></tr>
+      <tr><th>Classes</th><td>${classes.classes.length ? classes.classes.map(c => escapeHtml(c.name + (c.arm ? " " + c.arm : ""))).join(", ") : '<span class="muted">None yet</span>'}</td></tr>
+      <tr><th>Subjects</th><td>${subjects.subjects.length ? subjects.subjects.map(s => escapeHtml(s.name)).join(", ") : '<span class="muted">None yet</span>'}</td></tr>
+    `;
+  } catch (e) {
+    body.innerHTML = `<tr><td class="muted">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+$("#openCreateUser").onclick = () => {
+  $("#userForm").reset();
+  $("#userMsg").hidden = true;
+  $("#userDlg").showModal();
+};
+$("#userCancel").onclick = () => $("#userDlg").close();
+$("#userForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#userMsg"); msg.hidden = true;
+  try {
+    await API.post("/api/admin/users", {
+      username: $("#newUsername").value.trim(),
+      full_name: $("#newFullName").value.trim(),
+      password: $("#newPassword").value,
+      role: $("#newRole").value
+    });
+    $("#userDlg").close();
+    loadUsers(); loadSummary();
+  } catch (err) {
+    msg.textContent = err.message; msg.className = "msg err"; msg.hidden = false;
+  }
+});
+
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["admin"]);
+  if (!me) return;
+  loadSummary();
+  loadUsers();
+  loadSetup();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roster — Teacher</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;font-weight:700;font-size:.9rem;gap:4px}
+  .controls select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+
+  .sheet{
+    background:#fff;color:#000;
+    max-width:900px;margin:20px auto;padding:24px 28px;
+    border:1px solid #ccc;border-radius:10px;
+    font-family:"Segoe UI",Arial,sans-serif;
+  }
+  .sheet-head{text-align:center;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:14px}
+  .sheet-head h1{margin:0;font-size:20px}
+  .sheet-head .sub{font-size:13px;margin-top:2px}
+  .sheet-head .title{font-weight:800;margin-top:6px;font-size:15px}
+  .meta{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:13px;margin-bottom:12px}
+  table.roster{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.roster th,table.roster td{border:1px solid #333;padding:6px 8px;vertical-align:top}
+  table.roster th{background:#f0f2f7;text-align:left}
+  table.roster tbody tr:nth-child(even){background:#fafbfd}
+  .foot{display:flex;justify-content:space-between;margin-top:24px;font-size:12px}
+  .sig{border-top:1px solid #000;padding-top:4px;min-width:220px;text-align:center;margin-top:30px}
+
+  @media print{
+    @page{size:A4 portrait;margin:12mm}
+    body{background:#fff}
+    .controls,.no-print,.top{display:none!important}
+    .sheet{border:0;margin:0;padding:0;max-width:none}
+  }
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel no-print">
+    <h1>Class roster</h1>
+    <p class="lede">Print the class list with admission numbers and guardian contacts — a paper backup for the form teacher's file.</p>
+
+    <div class="controls">
+      <label>Class <select id="fClass"><option value="">—</option></select></label>
+      <label>Session <select id="fSession"><option value="">—</option></select></label>
+    </div>
+
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <label style="display:flex;gap:6px;align-items:center;font-weight:400">
+        <input type="checkbox" id="showGuardian" checked> Include guardian contacts
+      </label>
+      <button class="btn primary" id="previewBtn" type="button">Preview</button>
+      <button class="btn" id="printBtn" type="button">Print</button>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+  </section>
+
+  <div id="sheetHolder"></div>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let context = null;
+
+// role-aware nav
+(async () => {
+  try {
+    const { user } = await API.get("/api/me");
+    const nav = user.role === "admin"
+      ? renderAdminNav(location.pathname)
+      : renderTeacherNav(location.pathname);
+    document.getElementById("main").insertBefore(nav, document.getElementById("main").firstChild);
+  } catch {}
+})();
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadRefs() {
+  context = await API.get("/api/register/context");
+  const cls = await API.get("/api/teacher/classes");
+  const fill = (sel, items, label) => {
+    sel.innerHTML = `<option value="">—</option>`;
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.id; o.textContent = label(it); sel.appendChild(o);
+    }
+  };
+  fill($("#fClass"), cls.classes, c => `${c.name} ${c.arm || ""}`.trim());
+
+  const sess = context.sessions || [];
+  const ssel = $("#fSession");
+  ssel.innerHTML = `<option value="">—</option>`;
+  for (const s of sess) {
+    const o = document.createElement("option");
+    o.value = s.id;
+    o.textContent = `${s.name} — ${s.term}${s.is_current ? " (current)" : ""}`;
+    ssel.appendChild(o);
+  }
+  const cur = sess.find(s => s.is_current);
+  if (cur) ssel.value = cur.id;
+}
+
+function renderSheet() {
+  const holder = $("#sheetHolder");
+  const classId = $("#fClass").value;
+  const sessionId = $("#fSession").value;
+  if (!classId) {
+    $("#msg").textContent = "Pick a class first.";
+    $("#msg").className = "msg err"; $("#msg").hidden = false;
+    return;
+  }
+  const withGuardian = $("#showGuardian").checked;
+  const settings = context.settings || {};
+
+  API.get("/api/register/students?class_id=" + classId).then(({ class: klass, students }) => {
+    if (!students.length) {
+      $("#msg").textContent = "No active students in this class.";
+      $("#msg").className = "msg err"; $("#msg").hidden = false;
+      holder.innerHTML = "";
+      return;
+    }
+    $("#msg").hidden = true;
+
+    const sessionLabel = (context.sessions.find(s => String(s.id) === String(sessionId)) || {});
+    const total = students.length;
+    const males = students.filter(s => s.gender === "M").length;
+    const females = students.filter(s => s.gender === "F").length;
+
+    const headerCells = withGuardian
+      ? `<tr>
+           <th style="width:34px">#</th>
+           <th style="width:130px">Adm No</th>
+           <th>Student name</th>
+           <th style="width:40px">Sex</th>
+           <th style="width:180px">Guardian</th>
+           <th style="width:150px">Guardian phone</th>
+         </tr>`
+      : `<tr>
+           <th style="width:34px">#</th>
+           <th style="width:150px">Adm No</th>
+           <th>Student name</th>
+           <th style="width:50px">Sex</th>
+         </tr>`;
+
+    const rows = students.map((s, i) => {
+      if (withGuardian) {
+        return `<tr>
+          <td>${i + 1}</td>
+          <td>${escapeHtml(s.admission_no)}</td>
+          <td>${escapeHtml(s.full_name)}</td>
+          <td>${escapeHtml(s.gender || "")}</td>
+          <td>${escapeHtml(s.guardian_name || "")}</td>
+          <td>${escapeHtml(s.guardian_phone || "")}</td>
+        </tr>`;
+      }
+      return `<tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(s.admission_no)}</td>
+        <td>${escapeHtml(s.full_name)}</td>
+        <td>${escapeHtml(s.gender || "")}</td>
+      </tr>`;
+    }).join("");
+
+    holder.innerHTML = `
+      <div class="sheet">
+        <div class="sheet-head">
+          <h1>${escapeHtml(settings.school_name || "School")}</h1>
+          <div class="sub">${escapeHtml(settings.address || "")}</div>
+          <div class="title">Class Roster</div>
+        </div>
+        <div class="meta">
+          <div><strong>Class:</strong> ${escapeHtml(klass.name + " " + (klass.arm || ""))}</div>
+          <div><strong>Term:</strong> ${escapeHtml(sessionLabel.name || "")} · ${escapeHtml(sessionLabel.term || "")}</div>
+          <div><strong>Form teacher:</strong> ${escapeHtml(klass.form_teacher_name || "____________________")}</div>
+          <div><strong>Students:</strong> ${total} (M: ${males}, F: ${females})</div>
+          <div><strong>Printed:</strong> ${new Date().toLocaleDateString()}</div>
+        </div>
+        <table class="roster">
+          <thead>${headerCells}</thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="foot">
+          <div class="sig">Form teacher's signature</div>
+          <div class="sig">Date</div>
+        </div>
+      </div>`;
+  }).catch(e => {
+    $("#msg").textContent = e.message;
+    $("#msg").className = "msg err"; $("#msg").hidden = false;
+  });
+}
+
+$("#previewBtn").onclick = renderSheet;
+$("#printBtn").onclick = () => {
+  if (!$("#sheetHolder").innerHTML.trim()) renderSheet();
+  setTimeout(() => window.print(), 150);
+};
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["teacher", "admin"]);
+  if (!me) return;
+  await loadRefs();
+})();
+</script>
+</body>
+</html>

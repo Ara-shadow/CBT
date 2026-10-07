@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Question bank — Teacher</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .qform{display:grid;gap:10px}
+  .qform label{display:flex;flex-direction:column;font-weight:700;font-size:.92rem;gap:4px}
+  .qform input[type=text],.qform input[type=number],.qform select,.qform textarea{
+    padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);width:100%
+  }
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .opt-row{display:grid;grid-template-columns:34px 1fr 100px;align-items:center;gap:8px}
+  .opt-row .letter{font-weight:700;text-align:center;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 0}
+  .opt-row .pick{display:flex;justify-content:center;align-items:center;gap:6px;font-weight:700;font-size:.9rem}
+  dialog{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);max-width:720px;width:calc(100% - 32px);padding:20px}
+  dialog::backdrop{background:rgba(10,16,32,.6)}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .q-text{max-width:520px;white-space:pre-wrap}
+  .muted-cell{color:var(--muted);font-size:.9rem}
+  @media(max-width:700px){ .row2{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Question bank</h1>
+    <p class="lede">Create MCQs. You can edit or delete the ones you created. Questions from other teachers are visible but read-only.</p>
+
+    <div class="filters">
+      <select id="fSubject"><option value="">All subjects</option></select>
+      <select id="fLevel">
+        <option value="">All levels</option>
+        <option value="primary">Primary</option>
+        <option value="secondary">Secondary</option>
+        <option value="both">Both</option>
+      </select>
+      <input type="text" id="fSearch" placeholder="Search question text" style="min-width:220px">
+      <button class="btn primary" id="openAdd">+ Add question</button>
+      <button class="btn" id="openImport">Import CSV</button>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Question</th><th>Subject</th><th>Level</th><th>Answer</th>
+          <th>Marks</th><th>Author</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="body"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <h2 id="dlgTitle">Add question</h2>
+  <form id="dlgForm" class="qform">
+    <div class="row2">
+      <label>Subject
+        <select id="subject_id"><option value="">(none)</option></select>
+      </label>
+      <label>Class level
+        <select id="class_level">
+          <option value="secondary">Secondary</option>
+          <option value="primary">Primary</option>
+          <option value="both">Both</option>
+        </select>
+      </label>
+    </div>
+
+    <label>Question
+      <textarea id="question" rows="3" required></textarea>
+    </label>
+
+    <div style="display:grid;gap:6px">
+      <div class="opt-row"><div class="letter">A</div><input type="text" id="option_a"><div class="pick"><input type="radio" name="correct" value="A"> Correct</div></div>
+      <div class="opt-row"><div class="letter">B</div><input type="text" id="option_b"><div class="pick"><input type="radio" name="correct" value="B"> Correct</div></div>
+      <div class="opt-row"><div class="letter">C</div><input type="text" id="option_c"><div class="pick"><input type="radio" name="correct" value="C"> Correct</div></div>
+      <div class="opt-row"><div class="letter">D</div><input type="text" id="option_d"><div class="pick"><input type="radio" name="correct" value="D"> Correct</div></div>
+      <div class="opt-row"><div class="letter">E</div><input type="text" id="option_e"><div class="pick"><input type="radio" name="correct" value="E"> Correct</div></div>
+    </div>
+
+    <div class="row2">
+      <label>Marks <input type="number" id="marks" value="1" min="1" step="1"></label>
+      <label>Explanation (optional) <input type="text" id="explanation"></label>
+    </div>
+
+    <div id="dlgMsg" class="msg" hidden></div>
+
+    <div class="row" style="justify-content:flex-end;margin-top:8px">
+      <button type="button" class="btn" id="dlgCancel">Cancel</button>
+      <button type="submit" class="btn primary" id="dlgSave">Save question</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- CSV import dialog -->
+<dialog id="importDlg">
+  <h2>Import questions from CSV</h2>
+  <p class="muted">Columns: <code>question</code>, <code>option_a</code>..<code>option_e</code>, <code>correct_answer</code> (A–E), <code>marks</code>, <code>subject</code>, <code>explanation</code>. At least <code>question</code>, two options, and <code>correct_answer</code> are required.</p>
+
+  <div class="qform" style="margin-top:10px">
+    <label>CSV file
+      <input type="file" id="impFile" accept=".csv,text/csv">
+    </label>
+    <label>Default subject (used if a row has no matching subject)
+      <select id="impSubject"><option value="">(none)</option></select>
+    </label>
+    <label>Class level for all imported questions
+      <select id="impLevel">
+        <option value="secondary">Secondary</option>
+        <option value="primary">Primary</option>
+        <option value="both">Both</option>
+      </select>
+    </label>
+  </div>
+
+  <div id="impMsg" class="msg" hidden></div>
+  <div id="impReport" style="margin-top:10px;max-height:240px;overflow:auto"></div>
+
+  <div class="row" style="justify-content:flex-end;margin-top:14px">
+    <button type="button" class="btn" id="impCancel">Close</button>
+    <button type="button" class="btn primary" id="impGo">Upload and import</button>
+  </div>
+</dialog>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let subjects = [];
+let editingId = null;
+
+document.getElementById("main").insertBefore(renderTeacherNav("/teacher/questions.html"), document.getElementById("main").firstChild);
+
+function setCorrectRadio(letter) {
+  document.querySelectorAll('input[name="correct"]').forEach(r => r.checked = (r.value === letter));
+}
+function getCorrectRadio() {
+  const r = document.querySelector('input[name="correct"]:checked');
+  return r ? r.value : null;
+}
+
+async function loadSubjects() {
+  try {
+    const { subjects: list } = await API.get("/api/subjects");
+    subjects = list;
+    const fill = (sel, all) => {
+      sel.innerHTML = all ? `<option value="">All subjects</option>` : `<option value="">(none)</option>`;
+      for (const s of subjects) {
+        const o = document.createElement("option");
+        o.value = s.id;
+        o.textContent = s.name + (s.code ? ` (${s.code})` : "");
+        sel.appendChild(o);
+      }
+    };
+    fill($("#fSubject"), true);
+    fill($("#subject_id"), false);
+  } catch (e) { /* silent */ }
+}
+
+async function load() {
+  const body = $("#body");
+  try {
+    const params = new URLSearchParams();
+    if ($("#fSubject").value) params.set("subject_id", $("#fSubject").value);
+    if ($("#fLevel").value)   params.set("class_level", $("#fLevel").value);
+    if ($("#fSearch").value.trim()) params.set("q", $("#fSearch").value.trim());
+    const { questions } = await API.get("/api/questions?" + params.toString());
+    if (!questions.length) {
+      body.innerHTML = `<tr><td colspan="7" class="muted">No questions match.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const q of questions) {
+      const mine = q.created_by === me.id;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="q-text">${escapeHtml(q.question)}</td>
+        <td>${q.subject_name ? escapeHtml(q.subject_name) : '<span class="muted">—</span>'}</td>
+        <td>${q.class_level}</td>
+        <td><strong>${q.correct_answer}</strong></td>
+        <td>${q.marks}</td>
+        <td class="muted-cell">${q.created_by_name || "—"}${mine ? " (you)" : ""}</td>
+        <td></td>`;
+      const td = tr.lastElementChild;
+
+      const view = document.createElement("button");
+      view.className = "btn"; view.textContent = "View";
+      view.onclick = () => alert(formatForView(q));
+      td.appendChild(view);
+
+      if (mine) {
+        const edit = document.createElement("button");
+        edit.className = "btn"; edit.style.marginLeft = "6px";
+        edit.textContent = "Edit";
+        edit.onclick = () => openEdit(q);
+        td.appendChild(edit);
+
+        const del = document.createElement("button");
+        del.className = "btn danger"; del.style.marginLeft = "6px";
+        del.textContent = "Delete";
+        del.onclick = async () => {
+          if (!confirm("Delete this question?")) return;
+          try { await API.del(`/api/questions/${q.id}`); load(); }
+          catch (e) { alert(e.message); }
+        };
+        td.appendChild(del);
+      }
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="7" class="muted">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+function formatForView(q) {
+  const opts = ["A","B","C","D","E"].map(L => {
+    const t = q["option_" + L.toLowerCase()];
+    if (!t) return null;
+    const mark = L === q.correct_answer ? "  ← correct" : "";
+    return `${L}. ${t}${mark}`;
+  }).filter(Boolean).join("\n");
+  return `${q.question}\n\n${opts}\n\nMarks: ${q.marks}\nSubject: ${q.subject_name || "—"}\nLevel: ${q.class_level}` +
+         (q.explanation ? `\n\nExplanation: ${q.explanation}` : "");
+}
+
+function clearForm() {
+  editingId = null;
+  $("#question").value = "";
+  ["option_a","option_b","option_c","option_d","option_e","explanation"].forEach(id => $("#"+id).value = "");
+  $("#marks").value = 1;
+  $("#class_level").value = "secondary";
+  $("#subject_id").value = "";
+  setCorrectRadio(null);
+  $("#dlgTitle").textContent = "Add question";
+  $("#dlgSave").textContent = "Save question";
+  $("#dlgMsg").hidden = true;
+}
+
+function openAdd() { clearForm(); $("#dlg").showModal(); }
+
+function openEdit(q) {
+  clearForm();
+  editingId = q.id;
+  $("#subject_id").value = q.subject_id || "";
+  $("#class_level").value = q.class_level || "secondary";
+  $("#question").value = q.question;
+  $("#option_a").value = q.option_a || "";
+  $("#option_b").value = q.option_b || "";
+  $("#option_c").value = q.option_c || "";
+  $("#option_d").value = q.option_d || "";
+  $("#option_e").value = q.option_e || "";
+  $("#marks").value = q.marks;
+  $("#explanation").value = q.explanation || "";
+  setCorrectRadio(q.correct_answer);
+  $("#dlgTitle").textContent = "Edit question";
+  $("#dlgSave").textContent = "Update question";
+  $("#dlg").showModal();
+}
+
+$("#dlgForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#dlgMsg"); msg.hidden = true;
+  const correct = getCorrectRadio();
+  if (!correct) { msg.textContent = "Pick the correct answer"; msg.className = "msg err"; msg.hidden = false; return; }
+  const payload = {
+    subject_id: $("#subject_id").value ? Number($("#subject_id").value) : null,
+    class_level: $("#class_level").value,
+    question: $("#question").value,
+    option_a: $("#option_a").value || null,
+    option_b: $("#option_b").value || null,
+    option_c: $("#option_c").value || null,
+    option_d: $("#option_d").value || null,
+    option_e: $("#option_e").value || null,
+    correct_answer: correct,
+    marks: Number($("#marks").value) || 1,
+    explanation: $("#explanation").value || null
+  };
+  try {
+    if (editingId) await API.put(`/api/questions/${editingId}`, payload);
+    else           await API.post("/api/questions", payload);
+    $("#dlg").close();
+    load();
+  } catch (err) {
+    msg.textContent = err.message; msg.className = "msg err"; msg.hidden = false;
+  }
+});
+
+$("#dlgCancel").onclick = () => $("#dlg").close();
+$("#openAdd").onclick = openAdd;
+$("#fSubject").onchange = load;
+$("#fLevel").onchange = load;
+$("#fSearch").addEventListener("input", () => { clearTimeout(window._t); window._t = setTimeout(load, 250); });
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+/* ---------- CSV import ---------- */
+const importDlg = document.getElementById("importDlg");
+$("#openImport").onclick = () => {
+  $("#impFile").value = "";
+  $("#impMsg").hidden = true;
+  $("#impReport").innerHTML = "";
+  const sel = $("#impSubject");
+  sel.innerHTML = `<option value="">(none)</option>`;
+  for (const s of subjects) {
+    const o = document.createElement("option");
+    o.value = s.id;
+    o.textContent = s.name + (s.code ? ` (${s.code})` : "");
+    sel.appendChild(o);
+  }
+  importDlg.showModal();
+};
+$("#impCancel").onclick = () => importDlg.close();
+
+$("#impGo").onclick = async () => {
+  const file = $("#impFile").files && $("#impFile").files[0];
+  const msg = $("#impMsg");
+  const report = $("#impReport");
+  msg.hidden = true;
+  report.innerHTML = "";
+
+  if (!file) {
+    msg.textContent = "Choose a CSV file first.";
+    msg.className = "msg err"; msg.hidden = false;
+    return;
+  }
+
+  const form = new FormData();
+  form.append("file", file);
+  form.append("class_level", $("#impLevel").value);
+  form.append("subject_id", $("#impSubject").value || "");
+
+  try {
+    const res = await fetch("/api/questions/import", {
+      method: "POST",
+      credentials: "same-origin",
+      body: form
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      msg.textContent = data.error || `Upload failed (${res.status})`;
+      msg.className = "msg err"; msg.hidden = false;
+      if (Array.isArray(data.errors) && data.errors.length) {
+        report.innerHTML = `<p class="muted">Errors:</p><ul>${
+          data.errors.map(e => `<li>${escapeHtml(e)}</li>`).join("")
+        }</ul>`;
+      }
+      return;
+    }
+
+    msg.textContent = `Imported ${data.inserted} question(s). Skipped ${data.skipped}.`;
+    msg.className = "msg ok"; msg.hidden = false;
+
+    if (data.errors && data.errors.length) {
+      report.innerHTML = `<p class="muted">Skipped rows:</p><ul>${
+        data.errors.map(e => `<li>${escapeHtml(e)}</li>`).join("")
+      }</ul>`;
+    }
+
+    load();
+  } catch (e) {
+    msg.textContent = e.message;
+    msg.className = "msg err"; msg.hidden = false;
+  }
+};
+
+/* ---------- init ---------- */
+(async () => {
+  me = await loadUserHeader("#hdr", ["teacher", "admin"]);
+  if (!me) return;
+  await loadSubjects();
+  load();
+})();
+</script>
+</body>
+</html>

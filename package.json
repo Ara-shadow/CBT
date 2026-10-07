@@ -1,0 +1,21 @@
+{
+  "name": "cbt-school-system",
+  "version": "0.1.0",
+  "description": "CBT + PBT school system with register, scores, and report cards",
+  "type": "commonjs",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "seed": "node server/seed.js",
+    "reset": "node server/seed.js --reset"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "multer": "^2.4.0"
+  }
+}

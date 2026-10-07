@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exams — Teacher</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .exam-form{display:grid;gap:12px}
+  .exam-form label{display:flex;flex-direction:column;font-weight:700;font-size:.92rem;gap:4px}
+  .exam-form input,.exam-form select{padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);width:100%}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  dialog{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);max-width:900px;width:calc(100% - 32px);padding:22px;max-height:88vh;overflow:auto}
+  dialog::backdrop{background:rgba(10,16,32,.6)}
+  .picker{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+  .pick-panel{border:1px solid var(--line);border-radius:10px;padding:12px;max-height:320px;overflow:auto;background:var(--bg)}
+  .pick-panel h3{margin:0 0 8px;font-size:.95rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .q-item{padding:8px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:flex-start}
+  .q-item:last-child{border-bottom:0}
+  .q-item input[type=checkbox]{margin-top:4px}
+  .q-item .text{flex:1;font-size:.95rem}
+  .q-item .meta{color:var(--muted);font-size:.85rem}
+  .selected-item{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px dashed var(--line)}
+  .selected-item .idx{font-weight:700;min-width:24px}
+  .selected-item .text{flex:1;font-size:.95rem}
+  .status-pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.8rem;font-weight:700}
+  .status-draft{background:var(--flag-bg);color:var(--flag)}
+  .status-live{background:var(--ok-bg);color:var(--ok)}
+  .meta-line{color:var(--muted);font-size:.88rem}
+  .hint{color:var(--muted);font-weight:400;font-size:.86rem}
+  @media(max-width:800px){ .grid3,.grid2,.picker{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Exams</h1>
+    <p class="lede">Assemble MCQs into a CBT exam. Only an administrator can publish an exam to students.</p>
+
+    <div class="filters">
+      <button class="btn primary" id="openAdd">+ Create exam</button>
+      <label class="hint" style="display:flex;align-items:center;gap:6px;margin-left:auto">
+        <input type="checkbox" id="onlyMine"> Only my exams
+      </label>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Title</th><th>Subject</th><th>Class</th><th>Term</th>
+          <th>Qs</th><th>Marks</th><th>Duration</th><th>Status</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="body"><tr><td colspan="9" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <h2 id="dlgTitle">Create exam</h2>
+  <form id="dlgForm" class="exam-form">
+    <div class="grid2">
+      <label>Title <input type="text" id="title" required></label>
+      <label>Subject <select id="subject_id" required><option value="">—</option></select></label>
+    </div>
+
+    <div class="grid3">
+      <label>Class <select id="class_id" required><option value="">—</option></select></label>
+      <label>Session <select id="session_id" required><option value="">—</option></select></label>
+      <label>Term
+        <select id="term">
+          <option>First</option><option>Second</option><option>Third</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="grid3">
+      <label>Duration (minutes) <input type="number" id="duration_minutes" value="30" min="1"></label>
+      <label>Pass mark (%) <input type="number" id="pass_mark" value="50" min="1" max="100"></label>
+      <div style="display:flex;flex-direction:column;gap:6px;font-weight:700;font-size:.92rem">
+        Options
+        <label style="display:flex;align-items:center;gap:6px;font-weight:400"><input type="checkbox" id="shuffle_questions" checked> Shuffle questions</label>
+        <label style="display:flex;align-items:center;gap:6px;font-weight:400"><input type="checkbox" id="shuffle_options" checked> Shuffle options</label>
+      </div>
+    </div>
+
+    <div>
+      <strong style="font-size:.95rem">Questions</strong>
+      <span class="hint">Filter matches the exam’s subject. Tick questions to add them.</span>
+      <div class="picker">
+        <div class="pick-panel">
+          <h3>Available</h3>
+          <div id="availableList"><em class="hint">Pick a subject first.</em></div>
+        </div>
+        <div class="pick-panel">
+          <h3>Selected <span id="selectedCount" class="hint"></span></h3>
+          <div id="selectedList"><em class="hint">Nothing selected yet.</em></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="dlgMsg" class="msg" hidden></div>
+
+    <div class="row" style="justify-content:flex-end;margin-top:8px">
+      <button type="button" class="btn" id="dlgCancel">Cancel</button>
+      <button type="submit" class="btn primary" id="dlgSave">Save exam</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let subjects = [];
+let classes = [];
+let sessions = [];
+let allQuestions = [];    // fetched lazily, filtered by subject when picking
+let editingId = null;
+let selected = [];        // array of question objects (order = exam order)
+
+document.getElementById("main").insertBefore(renderTeacherNav("/teacher/exams.html"), document.getElementById("main").firstChild);
+
+/* ---------------- reference data ---------------- */
+
+async function loadRefs() {
+  const [subs, cls, sess] = await Promise.all([
+    API.get("/api/subjects"),
+    API.get("/api/teacher/classes").catch(() => ({ classes: [] })),   // fallback below
+    API.get("/api/teacher/sessions").catch(() => ({ sessions: [] }))
+  ]);
+  subjects = subs.subjects || [];
+  classes  = cls.classes   || [];
+  sessions = sess.sessions || [];
+
+  const fill = (sel, items, label, keepAll) => {
+    sel.innerHTML = keepAll ? `<option value="">All</option>` : `<option value="">—</option>`;
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.id;
+      o.textContent = label(it);
+      sel.appendChild(o);
+    }
+  };
+  fill($("#subject_id"), subjects, s => s.name + (s.code ? ` (${s.code})` : ""));
+  fill($("#class_id"),   classes,  c => `${c.name} ${c.arm || ""}`.trim());
+  fill($("#session_id"), sessions, s => `${s.name} — ${s.term}${s.is_current ? " (current)" : ""}`);
+}
+
+/* ---------------- list ---------------- */
+
+async function load() {
+  const body = $("#body");
+  try {
+    const params = new URLSearchParams();
+    if ($("#onlyMine").checked) params.set("mine", "1");
+    const { exams } = await API.get("/api/exams?" + params.toString());
+    if (!exams.length) {
+      body.innerHTML = `<tr><td colspan="9" class="muted">No exams yet.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const e of exams) {
+      const mine = e.created_by === me.id;
+      const isAdmin = me.role === "admin";
+      const canEdit = mine || isAdmin;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${escapeHtml(e.title)}</td>
+        <td>${e.subject_name || ""}</td>
+        <td>${e.class_name ? e.class_name + " " + (e.class_arm || "") : ""}</td>
+        <td>${e.session_name || ""} ${e.session_term || ""}</td>
+        <td>${e.question_count}</td>
+        <td>${e.total_marks}</td>
+        <td>${e.duration_minutes} min</td>
+        <td>${e.is_published
+          ? '<span class="status-pill status-live">Published</span>'
+          : '<span class="status-pill status-draft">Draft</span>'}</td>
+        <td></td>`;
+      const td = tr.lastElementChild;
+
+      const view = document.createElement("button");
+      view.className = "btn"; view.textContent = "View";
+      view.onclick = () => viewExam(e.id);
+      td.appendChild(view);
+
+      if (canEdit) {
+        const edit = document.createElement("button");
+        edit.className = "btn"; edit.style.marginLeft = "6px";
+        edit.textContent = "Edit";
+        edit.onclick = () => openEdit(e.id);
+        td.appendChild(edit);
+
+        if (isAdmin) {
+          const pub = document.createElement("button");
+          pub.className = "btn"; pub.style.marginLeft = "6px";
+          pub.textContent = e.is_published ? "Unpublish" : "Publish";
+          pub.onclick = async () => {
+            try {
+              if (e.is_published) await API.post(`/api/exams/${e.id}/unpublish`, {});
+              else                await API.post(`/api/exams/${e.id}/publish`, {});
+              load();
+            } catch (err) { alert(err.message); }
+          };
+          td.appendChild(pub);
+        }
+
+        const del = document.createElement("button");
+        del.className = "btn danger"; del.style.marginLeft = "6px";
+        del.textContent = "Delete";
+        del.onclick = async () => {
+          if (!confirm("Delete this exam?")) return;
+          try { await API.del(`/api/exams/${e.id}`); load(); }
+          catch (err) { alert(err.message); }
+        };
+        td.appendChild(del);
+      }
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="9" class="muted">${e.message}</td></tr>`;
+  }
+}
+
+/* ---------------- question picker ---------------- */
+
+async function loadQuestionsForPicker() {
+  try {
+    const q = $("#subject_id").value;
+    const params = new URLSearchParams();
+    if (q) params.set("subject_id", q);
+    const { questions } = await API.get("/api/questions?" + params.toString());
+    // Only questions with at least 2 options and a valid correct answer are usable — all are.
+    allQuestions = questions;
+    renderAvailable();
+  } catch (e) {
+    $("#availableList").innerHTML = `<em class="hint">${e.message}</em>`;
+  }
+}
+
+function renderAvailable() {
+  const box = $("#availableList");
+  if (!allQuestions.length) { box.innerHTML = `<em class="hint">No questions match.</em>`; return; }
+  box.innerHTML = "";
+  const selectedIds = new Set(selected.map(q => q.id));
+  for (const q of allQuestions) {
+    if (selectedIds.has(q.id)) continue;
+    const div = document.createElement("label");
+    div.className = "q-item";
+    div.innerHTML = `
+      <input type="checkbox" data-id="${q.id}">
+      <div class="text">${escapeHtml(q.question)}
+        <div class="meta">${q.subject_name || ""} · ${q.correct_answer} · ${q.marks} mark${q.marks===1?"":"s"}</div>
+      </div>`;
+    div.querySelector("input").addEventListener("change", () => {
+      const qObj = allQuestions.find(x => x.id === q.id);
+      if (qObj) { selected.push(qObj); renderSelected(); renderAvailable(); }
+    });
+    box.appendChild(div);
+  }
+}
+
+function renderSelected() {
+  const box = $("#selectedList");
+  $("#selectedCount").textContent = `(${selected.length}, ${selected.reduce((a,b)=>a+b.marks,0)} marks)`;
+  if (!selected.length) { box.innerHTML = `<em class="hint">Nothing selected yet.</em>`; return; }
+  box.innerHTML = "";
+  selected.forEach((q, i) => {
+    const div = document.createElement("div");
+    div.className = "selected-item";
+    div.innerHTML = `
+      <span class="idx">${i+1}.</span>
+      <span class="text">${escapeHtml(q.question)}
+        <div class="meta">${q.correct_answer} · ${q.marks} mark${q.marks===1?"":"s"}</div>
+      </span>
+      <button type="button" class="btn" style="padding:4px 10px;min-height:32px">×</button>`;
+    div.querySelector("button").onclick = () => {
+      selected.splice(i, 1);
+      renderSelected(); renderAvailable();
+    };
+    box.appendChild(div);
+  });
+}
+
+/* ---------------- create / edit ---------------- */
+
+function clearForm() {
+  editingId = null;
+  selected = [];
+  $("#title").value = "";
+  $("#subject_id").value = "";
+  $("#class_id").value = "";
+  $("#session_id").value = "";
+  $("#term").value = "First";
+  $("#duration_minutes").value = 30;
+  $("#pass_mark").value = 50;
+  $("#shuffle_questions").checked = true;
+  $("#shuffle_options").checked = true;
+  $("#dlgTitle").textContent = "Create exam";
+  $("#dlgSave").textContent = "Save exam";
+  $("#dlgMsg").hidden = true;
+  $("#availableList").innerHTML = `<em class="hint">Pick a subject first.</em>`;
+  renderSelected();
+}
+
+function openAdd() {
+  clearForm();
+  // pre-select the current session
+  const cur = sessions.find(s => s.is_current);
+  if (cur) $("#session_id").value = cur.id;
+  $("#dlg").showModal();
+}
+
+async function openEdit(id) {
+  clearForm();
+  try {
+    const { exam, questions } = await API.get(`/api/exams/${id}`);
+    editingId = exam.id;
+    $("#title").value = exam.title;
+    $("#subject_id").value = exam.subject_id || "";
+    $("#class_id").value = exam.class_id || "";
+    $("#session_id").value = exam.session_id || "";
+    $("#term").value = exam.term || "First";
+    $("#duration_minutes").value = exam.duration_minutes;
+    $("#pass_mark").value = exam.pass_mark;
+    $("#shuffle_questions").checked = !!exam.shuffle_questions;
+    $("#shuffle_options").checked = !!exam.shuffle_options;
+    selected = questions.slice();
+    await loadQuestionsForPicker();
+    renderSelected();
+    $("#dlgTitle").textContent = "Edit exam";
+    $("#dlgSave").textContent = "Update exam";
+    $("#dlg").showModal();
+  } catch (e) { alert(e.message); }
+}
+
+async function viewExam(id) {
+  try {
+    const { exam, questions } = await API.get(`/api/exams/${id}`);
+    const lines = [
+      `${exam.title}`,
+      `Subject: ${exam.subject_name || "—"}`,
+      `Class: ${exam.class_name || ""} ${exam.class_arm || ""}`,
+      `Term: ${exam.session_name || ""} ${exam.session_term || ""}`,
+      `Duration: ${exam.duration_minutes} min · Pass: ${exam.pass_mark}%`,
+      `Status: ${exam.is_published ? "Published" : "Draft"}`,
+      ``,
+      `Questions (${questions.length}):`
+    ];
+    questions.forEach((q, i) => lines.push(`${i+1}. ${q.question}  [${q.correct_answer}]`));
+    alert(lines.join("\n"));
+  } catch (e) { alert(e.message); }
+}
+
+$("#dlgForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#dlgMsg"); msg.hidden = true;
+  if (!selected.length) {
+    msg.textContent = "Pick at least one question";
+    msg.className = "msg err"; msg.hidden = false;
+    return;
+  }
+  const payload = {
+    title: $("#title").value.trim(),
+    subject_id: Number($("#subject_id").value),
+    class_id: Number($("#class_id").value),
+    session_id: Number($("#session_id").value),
+    term: $("#term").value,
+    duration_minutes: Number($("#duration_minutes").value),
+    pass_mark: Number($("#pass_mark").value),
+    shuffle_questions: $("#shuffle_questions").checked,
+    shuffle_options: $("#shuffle_options").checked,
+    questions: selected.map(q => q.id)
+  };
+  try {
+    if (editingId) await API.put(`/api/exams/${editingId}`, payload);
+    else           await API.post("/api/exams", payload);
+    $("#dlg").close();
+    load();
+  } catch (err) {
+    msg.textContent = err.message; msg.className = "msg err"; msg.hidden = false;
+  }
+});
+
+/* ---------------- wiring ---------------- */
+
+$("#dlgCancel").onclick = () => $("#dlg").close();
+$("#openAdd").onclick = openAdd;
+$("#onlyMine").onchange = load;
+$("#subject_id").addEventListener("change", async () => {
+  if ($("#subject_id").value) await loadQuestionsForPicker();
+});
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["teacher", "admin"]);
+  if (!me) return;
+  await loadRefs();
+  load();
+})();
+</script>
+</body>
+</html>

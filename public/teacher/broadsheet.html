@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Broadsheet</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;font-weight:700;font-size:.9rem;gap:4px}
+  .controls select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);min-width:220px}
+  .tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--line)}
+  .tab{padding:8px 14px;border:1px solid var(--line);border-bottom:0;border-radius:8px 8px 0 0;background:var(--bg);cursor:pointer;font-weight:700;font-size:.9rem}
+  .tab.active{background:var(--surface);color:var(--primary);box-shadow:0 -3px 0 var(--primary) inset}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .hint{color:var(--muted);font-weight:400;font-size:.85rem;margin-top:4px}
+
+  .sheet{
+    background:#fff;color:#000;
+    max-width:1200px;margin:20px auto;padding:22px 26px;
+    border:1px solid #ccc;border-radius:10px;
+    font-family:"Segoe UI",Arial,sans-serif;
+  }
+  .sheet + .sheet{margin-top:24px}
+  .sheet-head{text-align:center;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:12px}
+  .sheet-head h1{margin:0;font-size:20px;letter-spacing:.02em}
+  .sheet-head .sub{font-size:13px;margin-top:2px}
+  .sheet-head .title{font-weight:800;margin-top:6px;font-size:15px}
+  .meta{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:13px;margin-bottom:10px}
+  table.broad{width:100%;border-collapse:collapse;font-size:11.5px}
+  table.broad th,table.broad td{border:1px solid #333;padding:4px 5px;text-align:center;vertical-align:middle}
+  table.broad th{background:#f0f2f7;font-weight:800;font-size:11px}
+  table.broad th.name,table.broad td.name{text-align:left;padding-left:8px;min-width:180px}
+  table.broad td.pos{font-weight:800}
+  table.broad tbody tr:nth-child(even){background:#fafbfd}
+  table.broad tfoot td{background:#eef1f6;font-weight:800}
+  .foot{display:flex;justify-content:space-between;margin-top:18px;font-size:12px}
+  .sig{border-top:1px solid #000;padding-top:4px;min-width:200px;text-align:center;margin-top:28px}
+
+  @media print{
+    @page{size:A4 landscape;margin:10mm}
+    body{background:#fff}
+    .controls,.no-print,.top,.tabs,.actions{display:none!important}
+    .sheet{border:0;margin:0;padding:0;max-width:none;page-break-after:always}
+    .sheet:last-child{page-break-after:auto}
+    table.broad{font-size:10.5px}
+    table.broad th,table.broad td{padding:3px 3px}
+  }
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel no-print">
+    <h1>Class broadsheet</h1>
+    <p class="lede" id="lede">Ranked list of students with all subject totals.</p>
+
+    <div class="controls">
+      <label>Class
+        <select id="fClass"><option value="">—</option></select>
+        <span class="hint" id="classHint"></span>
+      </label>
+      <label>Session <select id="fSession"><option value="">—</option></select></label>
+      <label>Term
+        <select id="fTerm"><option>First</option><option>Second</option><option>Third</option></select>
+      </label>
+    </div>
+
+    <div class="tabs">
+      <div class="tab" data-type="midterm">Midterm (out of 40)</div>
+      <div class="tab active" data-type="end_of_term">End of term (out of 100)</div>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" id="previewBtn" type="button">Preview</button>
+      <button class="btn" id="printBtn" type="button">Print</button>
+      <button class="btn" id="csvBtn" type="button">Download CSV</button>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+  </section>
+
+  <div id="sheetHolder"></div>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let context = null;
+let allowedClasses = [];
+let isAdmin = false;
+let currentType = "end_of_term";
+const ALL_CLASSES = "__ALL__";
+
+// role-aware nav
+(async () => {
+  try {
+    const { user } = await API.get("/api/me");
+    const nav = user.role === "admin"
+      ? renderAdminNav(location.pathname)
+      : renderTeacherNav(location.pathname);
+    document.getElementById("main").insertBefore(nav, document.getElementById("main").firstChild);
+  } catch {}
+})();
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadRefs() {
+  context = await API.get("/api/register/context");
+
+  const access = await API.get("/api/broadsheet/classes");
+  allowedClasses = access.classes || [];
+  isAdmin = !!access.isAdmin;
+
+  if (isAdmin) {
+    $("#lede").textContent = "Admin view — every class. Ranked list of students with all subject totals.";
+    $("#classHint").textContent = "Choose “All classes” to render one sheet per class.";
+  } else {
+    $("#lede").textContent = "Your class(es). Ranked list of students with all subject totals.";
+    $("#classHint").textContent = "You only see classes you are assigned to.";
+  }
+
+  const sel = $("#fClass");
+  sel.innerHTML = `<option value="">—</option>`;
+  if (isAdmin && allowedClasses.length > 1) {
+    const oAll = document.createElement("option");
+    oAll.value = ALL_CLASSES;
+    oAll.textContent = "All classes (each on its own page)";
+    sel.appendChild(oAll);
+  }
+  for (const c of allowedClasses) {
+    const o = document.createElement("option");
+    o.value = c.id;
+    let label = `${c.name} ${c.arm || ""}`.trim();
+    if (c.role === "form") label += "  (form class)";
+    else if (c.role === "teacher" && c.subject_name) label += `  (${c.subject_name})`;
+    o.textContent = label;
+    sel.appendChild(o);
+  }
+
+  if (!allowedClasses.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "No classes assigned to you yet";
+    opt.disabled = true;
+    sel.appendChild(opt);
+  }
+
+  const sess = context.sessions || [];
+  const ssel = $("#fSession");
+  ssel.innerHTML = `<option value="">—</option>`;
+  for (const s of sess) {
+    const o = document.createElement("option");
+    o.value = s.id;
+    o.textContent = `${s.name} — ${s.term}${s.is_current ? " (current)" : ""}`;
+    ssel.appendChild(o);
+  }
+  const cur = sess.find(s => s.is_current);
+  if (cur) { ssel.value = cur.id; $("#fTerm").value = cur.term; }
+}
+
+function allChosen() {
+  return $("#fClass").value && $("#fSession").value && $("#fTerm").value;
+}
+
+function baseQs(classId) {
+  const p = new URLSearchParams({
+    session_id: $("#fSession").value,
+    term: $("#fTerm").value,
+    type: currentType
+  });
+  if (classId) p.set("class_id", classId);
+  return p;
+}
+
+function renderOneClassSheet(data, settings) {
+  const typeLabel = currentType === "midterm" ? "Midterm broadsheet" : "End-of-term broadsheet";
+  const maxPerSubject = currentType === "midterm" ? 40 : 100;
+
+  const header = `
+    <tr>
+      <th style="width:26px">#</th>
+      <th style="width:90px">Adm No</th>
+      <th class="name">Student</th>
+      <th style="width:26px">Sex</th>
+      ${data.subjects.map(s => `<th title="${escapeHtml(s.name)}">${escapeHtml(s.code || s.name.slice(0,4).toUpperCase())}</th>`).join("")}
+      <th style="width:52px">Sum</th>
+      <th style="width:52px">Avg</th>
+      <th style="width:52px">%</th>
+      <th style="width:36px">Pos</th>
+    </tr>`;
+
+  const rows = data.students.map((s, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${escapeHtml(s.admission_no)}</td>
+      <td class="name">${escapeHtml(s.full_name)}</td>
+      <td>${escapeHtml(s.gender || "")}</td>
+      ${data.subjects.map(sub => `<td>${s.scores[sub.id] != null ? s.scores[sub.id] : ""}</td>`).join("")}
+      <td>${s.sum}</td>
+      <td>${s.average}</td>
+      <td>${s.percentage}</td>
+      <td class="pos">${s.position}</td>
+    </tr>`).join("");
+
+  const subjectAvg  = data.subjects.map(sub => `<td>${data.subject_stats[sub.id].average}</td>`).join("");
+  const subjectHigh = data.subjects.map(sub => `<td>${data.subject_stats[sub.id].highest}</td>`).join("");
+  const subjectLow  = data.subjects.map(sub => `<td>${data.subject_stats[sub.id].lowest}</td>`).join("");
+
+  const foot = `
+    <tfoot>
+      <tr><td colspan="4" style="text-align:right">Class average</td>${subjectAvg}<td colspan="4"></td></tr>
+      <tr><td colspan="4" style="text-align:right">Class highest</td>${subjectHigh}<td colspan="4"></td></tr>
+      <tr><td colspan="4" style="text-align:right">Class lowest</td>${subjectLow}<td colspan="4"></td></tr>
+    </tfoot>`;
+
+  return `
+    <div class="sheet">
+      <div class="sheet-head">
+        <h1>${escapeHtml(settings.school_name || "School")}</h1>
+        <div class="sub">${escapeHtml(settings.address || "")}</div>
+        <div class="title">${escapeHtml(typeLabel)} — ${escapeHtml(data.session.name)} ${escapeHtml(data.term)} Term</div>
+      </div>
+      <div class="meta">
+        <div><strong>Class:</strong> ${escapeHtml(data.class.name + " " + (data.class.arm || ""))}</div>
+        <div><strong>Students:</strong> ${data.class_stats.students}</div>
+        <div><strong>Class average:</strong> ${data.class_stats.average}%</div>
+        <div><strong>Highest:</strong> ${data.class_stats.highest}%</div>
+        <div><strong>Lowest:</strong> ${data.class_stats.lowest}%</div>
+        <div><strong>Max per subject:</strong> ${maxPerSubject}</div>
+      </div>
+      <table class="broad">
+        <thead>${header}</thead>
+        <tbody>${rows}</tbody>
+        ${foot}
+      </table>
+      <div class="foot">
+        <div class="sig">Form teacher's signature</div>
+        <div class="sig">Principal's / Head Teacher's signature</div>
+      </div>
+    </div>`;
+}
+
+async function preview() {
+  if (!allChosen()) {
+    $("#msg").textContent = "Pick a class, session and term first.";
+    $("#msg").className = "msg err"; $("#msg").hidden = false;
+    return;
+  }
+  $("#msg").hidden = true;
+  const holder = $("#sheetHolder");
+  holder.innerHTML = `<div class="panel no-print"><p class="muted">Loading…</p></div>`;
+  const settings = context.settings || {};
+  const targetClass = $("#fClass").value;
+
+  try {
+    if (targetClass === ALL_CLASSES) {
+      const results = await Promise.all(
+        allowedClasses.map(c => API.get("/api/broadsheet?" + baseQs(c.id).toString())
+          .catch(e => ({ __error: e.message, __class: c })))
+      );
+      const htmlParts = [];
+      const skipped = [];
+      for (const data of results) {
+        if (data.__error) { skipped.push(data.__class.name + " " + (data.__class.arm || "") + ": " + data.__error); continue; }
+        if (!data.students.length) { skipped.push((data.class.name + " " + (data.class.arm || "")) + ": no students"); continue; }
+        htmlParts.push(renderOneClassSheet(data, settings));
+      }
+      if (!htmlParts.length) {
+        holder.innerHTML = `<div class="panel no-print"><p class="muted">No classes have any data to show.</p></div>`;
+        return;
+      }
+      holder.innerHTML = htmlParts.join("");
+      if (skipped.length) {
+        $("#msg").textContent = "Some classes were skipped: " + skipped.join(" · ");
+        $("#msg").className = "msg err"; $("#msg").hidden = false;
+      }
+    } else {
+      const data = await API.get("/api/broadsheet?" + baseQs(targetClass).toString());
+      if (!data.students.length) {
+        holder.innerHTML = `<div class="panel no-print"><p class="muted">No active students in this class.</p></div>`;
+        return;
+      }
+      holder.innerHTML = renderOneClassSheet(data, settings);
+    }
+  } catch (e) {
+    holder.innerHTML = `<div class="panel no-print"><p class="muted">${escapeHtml(e.message)}</p></div>`;
+  }
+}
+
+function csvEscape(v) {
+  const s = String(v == null ? "" : v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function buildCsvForClass(data) {
+  const lines = [];
+  lines.push(`Class: ${data.class.name} ${data.class.arm || ""}`.trim());
+  lines.push(`Session: ${data.session.name} — ${data.term} Term`);
+  lines.push("");
+  const header = ["#", "Adm No", "Student", "Sex",
+                  ...data.subjects.map(s => s.name),
+                  "Sum", "Average", "%", "Position"];
+  lines.push(header.map(csvEscape).join(","));
+  data.students.forEach((r, i) => {
+    const row = [
+      i + 1, r.admission_no, r.full_name, r.gender || "",
+      ...data.subjects.map(sub => r.scores[sub.id] != null ? r.scores[sub.id] : ""),
+      r.sum, r.average, r.percentage, r.position
+    ];
+    lines.push(row.map(csvEscape).join(","));
+  });
+  lines.push("");
+  const avgRow  = ["", "", "Class average", "", ...data.subjects.map(s => data.subject_stats[s.id].average), "", "", "", ""];
+  const highRow = ["", "", "Class highest", "", ...data.subjects.map(s => data.subject_stats[s.id].highest), "", "", "", ""];
+  const lowRow  = ["", "", "Class lowest",  "", ...data.subjects.map(s => data.subject_stats[s.id].lowest),  "", "", "", ""];
+  lines.push(avgRow.map(csvEscape).join(","));
+  lines.push(highRow.map(csvEscape).join(","));
+  lines.push(lowRow.map(csvEscape).join(","));
+  return lines.join("\r\n");
+}
+
+async function downloadCsv() {
+  if (!allChosen()) { alert("Pick a class, session and term first."); return; }
+  const targetClass = $("#fClass").value;
+
+  try {
+    if (targetClass === ALL_CLASSES) {
+      const results = await Promise.all(
+        allowedClasses.map(c => API.get("/api/broadsheet?" + baseQs(c.id).toString()).catch(() => null))
+      );
+      const blocks = [];
+      for (const data of results) {
+        if (!data || !data.students.length) continue;
+        blocks.push(buildCsvForClass(data));
+      }
+      if (!blocks.length) { alert("No data to export."); return; }
+      const csv = "\uFEFF" + blocks.join("\r\n\r\n\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `broadsheet-ALL-${$("#fTerm").value}-${currentType}-${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      window.location.href = "/api/broadsheet/csv?" + baseQs(targetClass).toString();
+    }
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+document.querySelectorAll(".tab").forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    t.classList.add("active");
+    currentType = t.dataset.type;
+    if ($("#sheetHolder").innerHTML.trim()) preview();
+  };
+});
+
+$("#previewBtn").onclick = preview;
+$("#printBtn").onclick = () => {
+  if (!$("#sheetHolder").innerHTML.trim()) preview();
+  setTimeout(() => window.print(), 250);
+};
+$("#csvBtn").onclick = downloadCsv;
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["teacher", "admin"]);
+  if (!me) return;
+  await loadRefs();
+})();
+</script>
+</body>
+</html>

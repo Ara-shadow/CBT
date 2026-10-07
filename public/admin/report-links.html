@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report links — Admin</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .controls label{display:flex;flex-direction:column;font-weight:700;font-size:.9rem;gap:4px}
+  .controls select,.controls input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+  .link-cell{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.82rem;word-break:break-all;max-width:280px}
+  .state-ok{color:var(--ok);font-weight:700}
+  .state-bad{color:var(--bad);font-weight:700}
+  .state-exp{color:var(--flag);font-weight:700}
+  .muted-cell{color:var(--muted);font-size:.86rem}
+</style>
+</head>
+<body>
+<header class="top" id="hdr">
+  <div class="wrap">
+    <div class="who"><strong id="userName">…</strong><span id="userRole"></span></div>
+    <button class="btn" id="logoutBtn">Log out</button>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="panel">
+    <h1>Report links</h1>
+    <p class="lede">Generate a private link for a parent. No login needed to view. Admin can revoke anytime.</p>
+
+    <div class="controls">
+      <label>Class <select id="fClass"><option value="">—</option></select></label>
+      <label>Session <select id="fSession"><option value="">—</option></select></label>
+      <label>Term
+        <select id="fTerm"><option>First</option><option>Second</option><option>Third</option></select>
+      </label>
+      <label>Type
+        <select id="fType">
+          <option value="end_of_term">End of term</option>
+          <option value="midterm">Midterm</option>
+        </select>
+      </label>
+      <label>Expires in (days) <input type="number" id="days" value="30" min="1" max="365" style="width:90px"></label>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn primary" id="genBulk">Generate for whole class</button>
+      <button class="btn" id="refresh">Refresh list</button>
+    </div>
+
+    <div id="msg" class="msg" hidden></div>
+
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>Student</th><th>Class</th><th>Term</th><th>Type</th>
+          <th>Link</th><th>Expires</th><th>Views</th><th>Status</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="body"><tr><td colspan="9" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<script src="/js/api.js"></script>
+<script src="/js/nav.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let me = null;
+let classes = [];
+let sessions = [];
+
+document.getElementById("main").insertBefore(renderAdminNav("/admin/report-links.html"), document.getElementById("main").firstChild);
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadRefs() {
+  const [cls, sess] = await Promise.all([
+    API.get("/api/teacher/classes"),
+    API.get("/api/teacher/sessions")
+  ]);
+  classes = cls.classes || [];
+  sessions = sess.sessions || [];
+
+  const fill = (sel, items, label) => {
+    sel.innerHTML = `<option value="">—</option>`;
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.id; o.textContent = label(it); sel.appendChild(o);
+    }
+  };
+  fill($("#fClass"),   classes,  c => `${c.name} ${c.arm || ""}`.trim());
+  fill($("#fSession"), sessions, s => `${s.name} — ${s.term}${s.is_current ? " (current)" : ""}`);
+  const cur = sessions.find(s => s.is_current);
+  if (cur) $("#fSession").value = cur.id;
+}
+
+function linkFor(token) {
+  return location.origin + "/report.html?t=" + token;
+}
+
+async function load() {
+  const body = $("#body");
+  try {
+    const { tokens } = await API.get("/api/admin/report-links");
+    if (!tokens.length) {
+      body.innerHTML = `<tr><td colspan="9" class="muted">No links yet. Generate some above.</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const t of tokens) {
+      const now = Date.now();
+      const exp = t.expires_at ? new Date(t.expires_at.replace(" ", "T") + "Z").getTime() : null;
+      let statusHtml;
+      if (t.revoked) statusHtml = `<span class="state-bad">Revoked</span>`;
+      else if (exp && now > exp) statusHtml = `<span class="state-exp">Expired</span>`;
+      else statusHtml = `<span class="state-ok">Active</span>`;
+
+      const fullLink = linkFor(t.token);
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${escapeHtml(t.student_name)}<div class="muted-cell">${escapeHtml(t.admission_no)}</div></td>
+        <td>${escapeHtml(t.class_name || "")} ${escapeHtml(t.class_arm || "")}</td>
+        <td>${escapeHtml(t.session_name || "")} ${escapeHtml(t.term)}</td>
+        <td>${t.type === "midterm" ? "Midterm" : "End of term"}</td>
+        <td class="link-cell">${escapeHtml(fullLink)}</td>
+        <td class="muted-cell">${escapeHtml(t.expires_at || "—")}</td>
+        <td>${t.view_count || 0}</td>
+        <td>${statusHtml}</td>
+        <td></td>`;
+      const td = tr.lastElementChild;
+
+      const copy = document.createElement("button");
+      copy.className = "btn"; copy.textContent = "Copy";
+      copy.onclick = async () => {
+        try { await navigator.clipboard.writeText(fullLink); copy.textContent = "Copied!"; setTimeout(()=>copy.textContent="Copy", 1200); }
+        catch { prompt("Copy link:", fullLink); }
+      };
+      td.appendChild(copy);
+
+      const open = document.createElement("a");
+      open.className = "btn"; open.style.marginLeft = "6px";
+      open.textContent = "Open"; open.href = fullLink; open.target = "_blank";
+      td.appendChild(open);
+
+      if (!t.revoked) {
+        const rev = document.createElement("button");
+        rev.className = "btn danger"; rev.style.marginLeft = "6px";
+        rev.textContent = "Revoke";
+        rev.onclick = async () => {
+          if (!confirm("Revoke this link?")) return;
+          try { await API.post(`/api/admin/report-links/${t.id}/revoke`, {}); load(); }
+          catch (e) { alert(e.message); }
+        };
+        td.appendChild(rev);
+      }
+
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="9" class="muted">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function generateBulk() {
+  if (!$("#fClass").value || !$("#fSession").value) { alert("Choose class and session"); return; }
+  const msg = $("#msg");
+  try {
+    const r = await API.post("/api/admin/report-links/bulk", {
+      class_id: Number($("#fClass").value),
+      session_id: Number($("#fSession").value),
+      term: $("#fTerm").value,
+      type: $("#fType").value,
+      days: Number($("#days").value) || 30
+    });
+    // build CSV and download
+    const rows = [["admission_no","student","link"]];
+    for (const g of r.generated) rows.push([g.admission_no, g.full_name, location.origin + "/report.html?t=" + g.token]);
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "report-links.csv"; a.click();
+    URL.revokeObjectURL(url);
+    msg.textContent = `Generated ${r.generated.length} link(s). CSV downloaded.`;
+    msg.className = "msg ok"; msg.hidden = false;
+    load();
+  } catch (e) {
+    msg.textContent = e.message; msg.className = "msg err"; msg.hidden = false;
+  }
+}
+
+$("#genBulk").onclick = generateBulk;
+$("#refresh").onclick = load;
+$("#logoutBtn").onclick = async () => { await API.post("/api/logout", {}); window.location.href = "/login.html"; };
+
+(async () => {
+  me = await loadUserHeader("#hdr", ["admin"]);
+  if (!me) return;
+  await loadRefs();
+  load();
+})();
+</script>
+</body>
+</html>
